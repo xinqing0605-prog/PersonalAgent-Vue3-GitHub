@@ -4,6 +4,16 @@
 
 完整技术方案见 [技术文档](docs/TECHNICAL_DOCUMENTATION.md)，包含架构、接口、数据布局、配置、安全、部署和测试说明。前端开发说明见 [Vue 3 前端](frontend-vue/README.md)，桌面运行与打包说明见 [桌面版](desktop/README.md)。
 
+## 在线体验与下载
+
+| 形态 | 地址 | 说明 |
+| --- | --- | --- |
+| 网页版 | https://personal-agent-demo.onrender.com | 免安装，浏览器直接打开 |
+| 桌面版（Windows） | [下载最新版](https://github.com/xinqing0605-prog/PersonalAgent-Vue3-GitHub/releases/latest) | 解压后双击「启动演示版.cmd」 |
+
+> 网页版运行在免费实例上，首次访问可能需要 30–60 秒唤醒，闲置 15 分钟后会休眠。
+> 桌面版首次运行如果 Windows 提示「未知发布者」，点「更多信息 → 仍要运行」即可（程序未购买代码签名证书）。
+
 ## 快速开始
 
 需要 Python 3.11、Node.js 22 和 npm。在项目根目录打开 PowerShell：
