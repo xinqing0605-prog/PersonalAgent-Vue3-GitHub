@@ -1,4 +1,4 @@
-# 个人知识库与事务助手
+# PersonalAgent｜个人知识库与事务助手
 
 支持浏览器和 Windows 桌面的个人助手：多模型对话、知识库检索、任务、笔记、附件、会话归档和主题。后端为 FastAPI，前端为 Vue 3 + Vite + TypeScript（Pinia 状态管理）；账户数据使用 SQLite 和本地文件，按账户隔离。
 
