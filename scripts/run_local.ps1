@@ -1,0 +1,27 @@
+param(
+    [int]$Port = 8000
+)
+
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+$env:PYTHONUTF8 = "1"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $venvPython)) {
+    throw ".venv not found. Run scripts\setup_local.ps1 first."
+}
+
+$env:APP_ENV = "local"
+$env:AGENT_ROOT_DIR = $projectRoot
+$env:APP_HOST = "127.0.0.1"
+$env:APP_PORT = [string]$Port
+
+Push-Location $projectRoot
+try {
+    & $venvPython -B -m uvicorn backend.app.main:app --host 127.0.0.1 --port $Port --reload
+    exit $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}

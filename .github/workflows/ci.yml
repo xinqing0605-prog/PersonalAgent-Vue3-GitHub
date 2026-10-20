@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: test
+      APP_DEBUG: "true"
+      AGENT_RUNTIME_DIR: .runtime/test
+      AUTH_DB_PATH: .runtime/test/auth.db
+      AGENT_USER_DATA_ROOT: .runtime/test/users
+      AGENT_LEGACY_USER_ID: "0"
+      ALLOW_KEY_REVEAL: "false"
+      ALLOW_SHARED_MODEL_CREDENTIALS: "false"
+      SMS_PROVIDER: console
+      SMS_DEV_MODE: "true"
+      SMS_CODE_SECRET: test_only_sms_secret_not_for_production
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Build Vue frontend
+        working-directory: frontend-vue
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+      - name: Run Python tests
+        run: python -B -m unittest discover -s tests -v
+      - name: Check Vue browser interactions
+        working-directory: frontend-vue
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - name: Check production sources and Netlify entry
+        run: python -B scripts/check_release.py
+      - name: Check frontend behavior
+        run: |
+          node scripts/test_chat_history.cjs
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t personal-agent:ci .
+      - name: Verify fresh install and container replacement
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create agent-ci-data
+          trap 'docker rm -f agent-ci >/dev/null 2>&1 || true; docker volume rm agent-ci-data >/dev/null 2>&1 || true' EXIT
+          for phase in create restore; do
+            docker run -d --name agent-ci -p 127.0.0.1:8000:8000 \
+              -v agent-ci-data:/var/lib/personal-agent \
+              -e ALLOWED_HOSTS=demo.example.test,localhost,127.0.0.1 \
+              -e ALLOWED_ORIGINS=https://demo.example.test personal-agent:ci
+            ready=false
+            for i in {1..30}; do
+              if curl --fail --silent http://127.0.0.1:8000/api/ready >/dev/null; then ready=true; break; fi
+              sleep 1
+            done
+            if [ "$ready" != true ]; then docker logs agent-ci; exit 1; fi
+            docker cp scripts/smoke_web.py agent-ci:/app/smoke_web.py
+            docker exec --user 1000:1000 agent-ci python -B /app/smoke_web.py "$phase"
+            docker rm -f agent-ci
+          done

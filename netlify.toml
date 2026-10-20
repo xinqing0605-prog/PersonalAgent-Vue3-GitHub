@@ -1,0 +1,3 @@
+[build]
+  command = "node scripts/build_netlify_entry.cjs"
+  publish = "dist/netlify-entry"

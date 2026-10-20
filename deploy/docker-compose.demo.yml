@@ -1,0 +1,24 @@
+services:
+  personal-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    env_file:
+      - .env.web
+    environment:
+      PORT: "8000"
+    ports:
+      # Expose only to the host's HTTPS reverse proxy.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - personal-agent-data:/var/lib/personal-agent
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  personal-agent-data:

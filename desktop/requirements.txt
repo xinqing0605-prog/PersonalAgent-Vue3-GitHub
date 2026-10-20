@@ -1,0 +1,5 @@
+# Native Windows window shell. The project itself still runs with backend/requirements.txt.
+pywebview>=5.3,<7
+pystray>=0.19,<1
+Pillow>=10,<12
+pyinstaller>=6.0,<7

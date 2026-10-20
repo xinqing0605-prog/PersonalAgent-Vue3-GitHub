@@ -1,0 +1,23 @@
+# Only application source needed by the image enters the Docker build context.
+**
+!Dockerfile
+!backend/
+!backend/**
+!frontend/
+!frontend/index.html
+!frontend-vue/
+!frontend-vue/**
+!desktop/
+!desktop/instance_guard.py
+!deploy/
+!deploy/container_entrypoint.py
+**/__pycache__/
+**/*.pyc
+**/.env
+**/.env.*
+**/*.db
+**/*.sqlite*
+**/node_modules/
+**/dist/
+**/test-results/
+**/playwright-report/

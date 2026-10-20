@@ -1,0 +1,60 @@
+# Python
+.venv/
+.build-venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Real environment files and secrets; only templates may be committed.
+.env
+.env.*
+!.env.example
+!.env.local.example
+!.env.test.example
+!.env.production.example
+
+# Runtime state and all per-account private data.
+.runtime/
+data/
+knowledge/
+notes/
+workspace/
+images/
+
+# Desktop/build output is not source code.
+build/
+dist/
+*.spec
+
+desktop-data/
+work/
+build-*/
+交付/
+2026-*/
+*.zip
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+node_modules/
+.vite/
+test-results/
+playwright-report/
+AGENTS.md
+启动个人智能体.cmd
+!deploy/.env.web.example
+!deploy/.env.modelscope.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

@@ -1,0 +1,15 @@
+# Keep repository source deterministic across Windows, CI and Linux deploys.
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+
+# Windows launcher scripts should retain native line endings.
+*.ps1 text eol=crlf
+*.bat text eol=crlf

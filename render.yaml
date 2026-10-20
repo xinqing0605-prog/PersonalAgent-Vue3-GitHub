@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: personal-agent-demo
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/ready
+    disk:
+      name: personal-agent-data
+      mountPath: /var/lib/personal-agent
+      sizeGB: 1
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_SAMESITE
+        value: lax
+      - key: ALLOW_KEY_REVEAL
+        value: "false"
+      - key: ALLOW_SHARED_MODEL_CREDENTIALS
+        value: "false"
+      - key: AGENT_ROOT_DIR
+        value: /app
+      - key: AGENT_RUNTIME_DIR
+        value: /var/lib/personal-agent/data
+      - key: AUTH_DB_PATH
+        value: /var/lib/personal-agent/auth.db
+      - key: AGENT_USER_DATA_ROOT
+        value: /var/lib/personal-agent/users
+      - key: AGENT_LEGACY_USER_ID
+        value: "0"
+      - key: STORAGE_BACKEND
+        value: local
+      - key: SMS_PROVIDER
+        value: disabled
+      - key: SMS_DEV_MODE
+        value: "false"
+      - key: SMS_CODE_SECRET
+        generateValue: true

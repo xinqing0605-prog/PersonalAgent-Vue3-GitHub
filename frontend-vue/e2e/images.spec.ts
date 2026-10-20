@@ -1,0 +1,290 @@
+import { test, expect, type Page } from '@playwright/test'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
+
+async function generatedImage(page: Page, width = 800, height = 600) {
+  await page.goto('/')
+  await expect(page.locator('#authScreen')).toBeVisible()
+  if (!(await page.locator('#authConfirmLabel').isVisible())) await page.locator('#authSwitch').click()
+  await page.locator('#authUsername').fill(`I${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`)
+  await page.locator('#authPassword').fill('Safe1234!')
+  await page.locator('#authConfirmPassword').fill('Safe1234!')
+  await page.locator('#authSubmit').click()
+  await expect(page.locator('#authScreen')).toBeHidden()
+  const source = await page.evaluate(({ width, height }) => {
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height
+    const context = canvas.getContext('2d')!
+    context.fillStyle = '#0f766e'; context.fillRect(0, 0, width, height)
+    context.fillStyle = '#ffffff'; context.fillRect(100, 100, 200, 200)
+    return canvas.toDataURL('image/png')
+  }, { width, height })
+  // Only the paid model call is simulated; image and note persistence use real APIs.
+  await page.route('**/api/ask/stream', async route => {
+    const events = [{ type: 'meta', mode: 'image', images: [source], answer_origin: 'model', provider: 'Test', model: 'image-test' },
+      { type: 'delta', content: '已生成图片。' }, { type: 'done' }]
+    await route.fulfill({ contentType: 'text/event-stream', body: events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') })
+  })
+  await page.locator('#question').fill('生成图片'); await page.locator('#ask').click()
+  await expect(page.locator('.generated-images img')).toHaveCount(1)
+  return source
+}
+
+test('generated image zoom, download, note edit and persistence after reload', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
+  await generatedImage(page)
+  await page.mouse.move(5, 5)
+  await expect(page.locator('.image-save-button')).toHaveCount(0)
+  await expect(page.locator('.generated-image-actions')).toHaveCount(0)
+  const thumbnail = page.locator('.generated-images img')
+  await thumbnail.hover()
+  const saveIcon = page.getByRole('button', { name: '保存图片', exact: true })
+  await expect(saveIcon).toBeVisible()
+  const thumbnailBox = (await thumbnail.boundingBox())!
+  const iconBox = (await saveIcon.boundingBox())!
+  expect(iconBox.x).toBeGreaterThan(thumbnailBox.x + thumbnailBox.width - 50)
+  expect(iconBox.y).toBeGreaterThanOrEqual(thumbnailBox.y)
+  expect(iconBox.y).toBeLessThan(thumbnailBox.y + 20)
+  await page.screenshot({ path: test.info().outputPath('hover-save-icon.png') })
+  await page.mouse.move(5, 5); await expect(saveIcon).toHaveCount(0)
+  await page.locator('[data-generated-image-preview]').click()
+  const viewer = page.getByRole('dialog', { name: '图片预览', exact: true })
+  await expect(viewer).toBeVisible()
+  const preview = viewer.locator('img')
+  await expect(preview).toHaveJSProperty('naturalWidth', 800)
+  await expect(viewer.locator('.el-image-viewer__actions')).toBeHidden()
+  await expect(viewer.locator('header, output, .image-viewer-toolbar')).toHaveCount(0)
+  await expect(preview).toHaveCSS('cursor', 'grab')
+  const original = (await preview.boundingBox())!
+  expect(original.width).toBeLessThanOrEqual(800)
+  await preview.hover(); await page.mouse.wheel(0, -120)
+  await expect.poll(async () => (await preview.boundingBox())!.width).toBeGreaterThan(original.width + 50)
+  const zoomed = (await preview.boundingBox())!
+  await page.mouse.move(zoomed.x + zoomed.width / 2, zoomed.y + zoomed.height / 2)
+  await page.mouse.down(); await expect(preview).toHaveCSS('cursor', 'grabbing')
+  await page.mouse.move(zoomed.x + zoomed.width / 2 + 80, zoomed.y + zoomed.height / 2 + 50, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(async () => (await preview.boundingBox())!.x).toBeGreaterThan(zoomed.x + 50)
+  await page.screenshot({ path: test.info().outputPath('image-preview.png') })
+  await page.mouse.wheel(0, 120)
+  await expect.poll(async () => Math.round((await preview.boundingBox())!.width)).toBe(Math.round(original.width))
+  await preview.hover()
+  const downloaded = page.waitForEvent('download')
+  await viewer.getByRole('button', { name: '保存图片', exact: true }).click()
+  const download = await downloaded
+  expect(download.suggestedFilename()).toBe('生成图片.png')
+  expect(await download.failure()).toBeNull()
+  await page.keyboard.press('Escape'); await expect(viewer).toBeHidden()
+  page.once('dialog', dialog => dialog.accept('生成图片笔记'))
+  await page.locator('[data-save-note]').click()
+  await expect(page.locator('#toast')).toContainText('包含图片')
+  await page.locator('#openNotes').click()
+  await page.locator('.note-card summary').click()
+  const image = page.locator('.note-card-body img')
+  await expect(image).toHaveAttribute('src', /^\/api\/images\/[a-f0-9]{64}\.png$/)
+  await expect(image).toHaveJSProperty('naturalWidth', 800)
+  const localUrl = await image.getAttribute('src')
+  await page.screenshot({ path: test.info().outputPath('saved-image-note.png') })
+  await image.click(); await expect(viewer).toBeVisible()
+  await viewer.locator('img').click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: '复制图片' })).toBeVisible()
+  await page.keyboard.press('Escape'); await expect(page.getByRole('menu')).toBeHidden()
+  await expect(viewer).toBeVisible()
+  await page.keyboard.press('Escape'); await expect(page.locator('#notesModal')).toBeVisible()
+  await page.locator('[data-note-edit]').click()
+  await expect(page.locator('#noteEditorContent img')).toHaveAttribute('src', localUrl!)
+  await page.locator('#noteEditorTitle').fill('更新后的图片笔记')
+  await page.locator('#saveNoteButton').click()
+  await expect(page.locator('.note-summary-title')).toHaveText('更新后的图片笔记')
+  await page.reload(); await page.locator('#openNotes').click(); await page.locator('.note-card summary').click()
+  await expect(image).toHaveAttribute('src', localUrl!)
+  await expect(image).toHaveJSProperty('naturalWidth', 800)
+  expect(errors).toEqual([])
+})
+
+test('copy actual PNG to clipboard and paste into a new note', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await generatedImage(page)
+  await page.locator('.generated-images img').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '复制图片' }).click()
+  await expect(page.locator('#toast')).toContainText('图片已复制')
+  expect(await page.evaluate(async () => (await navigator.clipboard.read())[0]!.types)).toContain('image/png')
+  await page.locator('#openNotes').click(); await page.locator('#newNote').click()
+  await page.locator('#noteEditorTitle').fill('粘贴图片')
+  await page.locator('#noteEditorContent').focus(); await page.keyboard.press('Control+V')
+  await expect(page.locator('#noteEditorContent img')).toHaveJSProperty('naturalWidth', 800)
+  await page.locator('#saveNoteButton').click(); await page.locator('.note-card summary').click()
+  await expect(page.locator('.note-card-body img')).toHaveJSProperty('naturalWidth', 800)
+})
+
+test('download icon stays hidden when the image corner scrolls behind the header', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 720 })
+  await generatedImage(page, 600, 1200)
+  const image = page.locator('.generated-images img')
+  await page.locator('.chat-body').evaluate(element => { element.scrollTop = element.scrollHeight })
+  const box = (await image.boundingBox())!
+  const header = (await page.locator('.chat-header').boundingBox())!
+  expect(box.y).toBeLessThan(header.y + header.height)
+  await page.mouse.move(box.x + box.width / 2, Math.min(box.y + box.height - 30, 450))
+  await expect(page.locator('.image-save-button')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('clipped-image-no-download.png') })
+  await page.locator('.chat-body').evaluate(element => { element.scrollTop = 0 })
+  const visible = (await image.boundingBox())!
+  await page.mouse.move(visible.x + 50, visible.y + 50)
+  await expect(page.locator('.image-save-button')).toBeVisible()
+})
+
+test('copied image pastes into composer, previews, and sends with text without repeating in next turn', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await generatedImage(page)
+  await page.locator('.generated-images img').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '复制图片' }).click()
+  await expect(page.locator('#toast')).toContainText('图片已复制')
+  await page.locator('#question').fill('请描述这张图片的颜色')
+  await page.locator('#question').focus(); await page.keyboard.press('Control+V')
+  const thumbnail = page.locator('#attachmentList img')
+  await expect(thumbnail).toHaveJSProperty('naturalWidth', 800)
+  await expect(page.locator('#question')).toHaveValue('请描述这张图片的颜色')
+  await thumbnail.click()
+  await expect(page.getByRole('dialog', { name: '图片预览', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.reload()
+  await expect(thumbnail).toHaveJSProperty('naturalWidth', 800)
+  await expect(page.locator('#question')).toHaveValue('请描述这张图片的颜色')
+  await page.screenshot({ path: test.info().outputPath('composer-pasted-image.png') })
+  await page.unroute('**/api/ask/stream')
+  const payloads: any[] = []
+  await page.route('**/api/ask/stream', route => {
+    payloads.push(route.request().postDataJSON())
+    return route.fulfill({ contentType: 'text/event-stream', body: 'data: {"type":"delta","content":"图片说明"}\n\ndata: {"type":"done"}\n\n' })
+  })
+  await page.locator('#ask').click()
+  await expect(page.locator('.message-user-attachments img')).toHaveJSProperty('naturalWidth', 800)
+  await expect(page.locator('#attachmentPanel')).toBeHidden()
+  expect(payloads[0].question).toBe('请描述这张图片的颜色')
+  expect(payloads[0].attachment_filenames).toHaveLength(1)
+  await page.locator('.message-user-attachments img').click()
+  await expect(page.getByRole('dialog', { name: '图片预览', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.locator('#question').fill('下一条纯文字'); await page.locator('#ask').click()
+  await expect.poll(() => payloads.length).toBe(2)
+  expect(payloads[1].attachment_filenames).toEqual([])
+  await page.reload(); await expect(page.locator('.message-user-attachments img')).toHaveJSProperty('naturalWidth', 800)
+})
+
+test('image upload blocks early sending, stays in its conversation, and can be removed or sent alone', async ({ page }) => {
+  const source = await generatedImage(page)
+  let release!: () => void
+  let started!: () => void
+  const uploadStarted = new Promise<void>(resolve => { started = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/conversations/*/files', async route => {
+    if (route.request().method() !== 'POST') return route.continue()
+    started(); await gate; await route.continue()
+  })
+  await page.locator('#question').fill('保留草稿')
+  await page.locator('#fileInput').setInputFiles({ name: 'pasted.png', mimeType: 'image/png', buffer: Buffer.from(source.split(',')[1]!, 'base64') })
+  await uploadStarted
+  await expect(page.locator('#attachmentCount')).toContainText('上传中')
+  await page.locator('#ask').click()
+  await expect(page.locator('#toast')).toContainText('还在上传')
+  await expect(page.locator('#question')).toHaveValue('保留草稿')
+  await page.locator('#newChat').click()
+  release()
+  await expect(page.locator('#attachmentList img')).toHaveCount(0)
+  await page.locator('.conversation-row').last().locator('[data-conversation]').click()
+  await expect(page.locator('#attachmentList img')).toHaveJSProperty('naturalWidth', 800)
+  await page.getByRole('button', { name: '移除附件 pasted.png', exact: true }).click()
+  await expect(page.locator('#attachmentList img')).toHaveCount(0)
+  await page.unroute('**/api/conversations/*/files')
+  await page.locator('#fileInput').setInputFiles({ name: 'alone.png', mimeType: 'image/png', buffer: Buffer.from(source.split(',')[1]!, 'base64') })
+  await expect(page.locator('#attachmentList img')).toHaveCount(1)
+  await page.locator('#question').fill('')
+  const request = page.waitForRequest('**/api/ask/stream')
+  await page.locator('#ask').click()
+  expect((await request).postDataJSON().attachment_filenames).toEqual(['alone.png'])
+  await expect(page.locator('.message-user-attachments img')).toHaveJSProperty('naturalWidth', 800)
+})
+
+test('paste upload errors preserve text; right-click paste supports images and limits four per message', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await generatedImage(page)
+  await page.locator('.generated-images img').click({ button: 'right' }); await page.getByRole('menuitem', { name: '复制图片' }).click()
+  await expect(page.locator('#toast')).toContainText('图片已复制')
+  await page.route('**/api/conversations/*/files', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 503, json: { detail: '上传暂不可用，请重试' } }) : route.continue())
+  await page.locator('#question').fill('不要丢失的文字'); await page.keyboard.press('Control+V')
+  await expect(page.locator('#toast')).toContainText('上传暂不可用')
+  await expect(page.locator('#question')).toHaveValue('不要丢失的文字')
+  await expect(page.locator('#attachmentList img')).toHaveCount(0)
+  await page.unroute('**/api/conversations/*/files')
+  await page.locator('#question').click({ button: 'right' })
+  await page.locator('[data-text-context="paste"]').click()
+  await expect(page.locator('#attachmentList img')).toHaveCount(1)
+  for (let count = 2; count <= 4; count++) {
+    await page.locator('#question').focus(); await page.keyboard.press('Control+V')
+    await expect(page.locator('#attachmentList img')).toHaveCount(count)
+  }
+  await page.locator('#question').focus(); await page.keyboard.press('Control+V')
+  await expect(page.locator('#toast')).toContainText('最多 4 张图片')
+  await expect(page.locator('#attachmentList img')).toHaveCount(4)
+  await expect(page.locator('#question')).toHaveValue('不要丢失的文字')
+})
+
+test('small preview keeps intrinsic size and supports right-click copy, mask close and keyboard opening', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await generatedImage(page, 280, 420)
+  await page.locator('[data-generated-image-preview]').focus(); await page.keyboard.press('Enter')
+  const viewer = page.getByRole('dialog', { name: '图片预览', exact: true })
+  const preview = viewer.locator('img')
+  await expect(preview).toBeVisible()
+  await expect.poll(async () => Math.round((await preview.boundingBox())!.width)).toBe(280)
+  await expect.poll(async () => Math.round((await preview.boundingBox())!.height)).toBe(420)
+  await page.mouse.move(5, 5); await expect(page.locator('.image-save-button')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('compact-image-preview.png') })
+  await preview.click({ button: 'right' })
+  await page.screenshot({ path: test.info().outputPath('image-copy-menu.png') })
+  await page.getByRole('menuitem', { name: '复制图片' }).click()
+  await expect(page.locator('#toast')).toContainText('图片已复制')
+  expect(await page.evaluate(async () => (await navigator.clipboard.read())[0]!.types)).toContain('image/png')
+  await expect(viewer).toBeVisible()
+  await page.mouse.click(10, 500); await expect(viewer).toBeHidden()
+  await page.locator('[data-generated-image-preview]').click()
+  await viewer.getByRole('button', { name: '关闭图片预览', exact: true }).click()
+  await expect(viewer).toBeHidden()
+})
+
+test('failed image import does not silently save a text-only note', async ({ page }) => {
+  await generatedImage(page)
+  await page.route('**/api/images/import', route => route.fulfill({ status: 502, json: { detail: '读取图片失败，图片链接已过期。' } }))
+  page.once('dialog', dialog => dialog.accept('不应保存'))
+  await page.locator('[data-save-note]').click()
+  await expect(page.locator('#toast')).toContainText('图片链接已过期')
+  await page.locator('#openNotes').click()
+  await expect(page.locator('.note-card')).toHaveCount(0)
+})
+
+test('Windows native bitmap clipboard pastes into the note editor', async ({ playwright }) => {
+  test.skip(process.platform !== 'win32', 'Windows desktop clipboard')
+  // Headless Edge has its own clipboard; CF_DIB must be checked in a real window.
+  const browser = await playwright.chromium.launch({ channel: 'msedge', headless: false })
+  try {
+  const page = await browser.newPage({ baseURL: test.info().project.use.baseURL })
+  const source = await generatedImage(page)
+  const python = process.env.AGENT_TEST_PYTHON || 'python'
+  await expect(async () => {
+    await promisify(execFile)(python, ['-B', '-c',
+      'import os; from desktop.image_clipboard import copy_bitmap, decode_image; copy_bitmap(decode_image(os.environ["TEST_IMAGE_DATA"])[0])'],
+      { cwd: fileURLToPath(new URL('../../', import.meta.url)), windowsHide: true, env: { ...process.env, TEST_IMAGE_DATA: source } })
+  }).toPass({ timeout: 5000 })
+  await page.locator('#question').fill('桌面粘贴的图片')
+  await page.keyboard.press('Control+V')
+  await expect(page.locator('#attachmentList img')).toHaveJSProperty('naturalWidth', 800)
+  await page.locator('#openNotes').click(); await page.locator('#newNote').click()
+  await page.locator('#noteEditorTitle').fill('桌面剪贴板图片')
+  await page.locator('#noteEditorContent').focus(); await page.keyboard.press('Control+V')
+  await expect(page.locator('#noteEditorContent img')).toHaveJSProperty('naturalWidth', 800)
+  await page.locator('#saveNoteButton').click(); await page.locator('.note-card summary').click()
+  await expect(page.locator('.note-card-body img')).toHaveJSProperty('naturalWidth', 800)
+  } finally { await browser.close() }
+})

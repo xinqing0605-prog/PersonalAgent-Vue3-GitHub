@@ -1,0 +1,4 @@
+# Replace demo.example.com with a domain pointing at this server.
+demo.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
