@@ -1,7 +1,7 @@
 FROM node:22-slim AS frontend-build
 WORKDIR /frontend-vue
 COPY frontend-vue/package.json frontend-vue/package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com
 COPY frontend-vue/ ./
 RUN npm run build
 
@@ -23,7 +23,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt \
+RUN python -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r /tmp/requirements.txt \
     && useradd --uid 1000 --create-home --shell /usr/sbin/nologin agent
 COPY backend ./backend
 COPY --from=frontend-build /frontend-vue/dist ./frontend
