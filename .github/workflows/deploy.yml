@@ -1,0 +1,48 @@
+name: Deploy to server
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload source
+        run: |
+          rsync -az --delete \
+            --exclude '.git' --exclude 'node_modules' --exclude '.venv' \
+            --exclude 'data' --exclude 'desktop-data' \
+            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/apps/PersonalAgent-Vue3-GitHub/
+
+      - name: Rebuild and restart
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -s' <<'EOF'
+          set -e
+          cd /opt/apps/PersonalAgent-Vue3-GitHub
+          docker build -t personal-agent:1.0 .
+          docker rm -f personal-agent 2>/dev/null || true
+          docker run -d --name personal-agent --restart=always \
+            -p 8080:8000 \
+            -v /opt/pa-data:/var/lib/personal-agent \
+            -e APP_ENV=local -e APP_DEBUG=false -e APP_HOST=0.0.0.0 \
+            -e ALLOWED_HOSTS=49.232.39.123,localhost,127.0.0.1 \
+            -e ALLOWED_ORIGINS=http://49.232.39.123:8080 \
+            -e SESSION_COOKIE_SECURE=false \
+            -e SMS_PROVIDER=disabled \
+            -e SMS_CODE_SECRET=3AfJeOmu8o1qrDcZpnsbt9PlC6TS4z5HkGB2QRi0 \
+            -e STORAGE_BACKEND=local \
+            personal-agent:1.0
+          docker image prune -f
+          EOF
