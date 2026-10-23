@@ -114,6 +114,7 @@ export const useThemeStore = defineStore('theme', () => {
       else if (activeRevision === revision) {
         draft.value = normalize(saved.value); apply(draft.value)
         message.value = method === 'PUT' ? '主题已保存。' : '已切换到收藏主题。'
+        if (method === 'PUT') visible.value = false
       }
     }).catch(failure => {
       if (activeSession === session && activeRevision === revision) { message.value = describe(failure); error.value = true }

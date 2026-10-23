@@ -36,6 +36,7 @@ from .image_assets import store_image, image_path
 from .auth import (
     SESSION_COOKIE,
     SESSION_TTL_DAYS,
+    PHONE_MOBILE_PATTERN,
     authenticate_user,
     create_session,
     get_user_by_id,
@@ -453,7 +454,7 @@ def chat_model_catalog(user_id: int = 1) -> list[dict[str, object]]:
             **{key: value for key, value in item.items() if key not in {"default_model"}},
             "model": model,
             "name": str(service.get("name") or item.get("name") or model),
-            "provider": str(item.get("provider") or service.get("name") or "模型服务"),
+            "provider": str(service.get("name") or item.get("provider") or "模型服务"),
             "configured": bool(key and not key.startswith("your_") and service.get("enabled", True)),
             "api_key_hint": f"{key[:3]}…{key[-4:]}" if len(key) > 8 else ("已配置" if key else ""),
             "base_url": str(service.get("base_url") or item.get("base_url") or ""),
@@ -648,7 +649,7 @@ class KnowledgeBaseUpdateRequest(BaseModel):
 
 
 class KnowledgeBaseDocumentRequest(BaseModel):
-    files: list[UploadedFileRequest] = Field(min_length=1, max_length=MAX_FILES_PER_UPLOAD)
+    files: list[UploadedFileRequest] = Field(min_length=1, max_length=50)
 
 
 class KnowledgeBase(BaseModel):
@@ -1725,6 +1726,8 @@ def auth_status(request: Request) -> dict[str, object]:
     return {
         "registered": account_count > 0,
         "registration_allowed": True,
+        "sms_demo": SETTINGS.sms_provider == "console" and SETTINGS.sms_dev_mode and not SETTINGS.is_production,
+        "phone_mobile_pattern": PHONE_MOBILE_PATTERN,
         "account_count": account_count,
         "authenticated": user is not None,
         "user": user,
@@ -1744,7 +1747,7 @@ def auth_send_sms(request: SmsCodeRequest) -> dict[str, object]:
         "resend_in": result["resend_in"],
         "provider": result["provider"],
         "dev_code": result.get("dev_code", ""),
-        "message": "验证码已发送。" if "dev_code" not in result else "开发模式验证码已生成。",
+        "message": "验证码已发送。" if "dev_code" not in result else "验证码已生成，请查看下方。",
     }
 
 
@@ -2316,6 +2319,47 @@ def reveal_model_service_key(service_id: str, request: Request) -> dict[str, obj
     return {"service_id": service_id, "api_key": str(services[service_id].get("api_key", ""))}
 
 
+def validate_model_identity(name: str, model: str, user_id: int, exclude_id: str = "") -> None:
+    """A model identifier is unique within a provider, regardless of endpoint/type."""
+    if not model.strip():
+        return
+    for sid, item in configured_model_services(user_id).items():
+        if sid == exclude_id or item.get("provider_only"):
+            continue
+        if (str(item.get("name", "")).strip().casefold() == name.strip().casefold()
+                and str(item.get("model", "")).strip().casefold() == model.strip().casefold()):
+            raise HTTPException(status_code=409, detail="该服务商下已存在同名模型，请使用不同的模型标识")
+
+
+class ModelProviderUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    service_type: Literal["综合服务", "大模型", "文档解析", "嵌入模型", "重排模型"] | None = None
+
+
+@app.put("/api/model-providers/{service_id}")
+def update_model_provider(service_id: str, request: ModelProviderUpdateRequest, http_request: Request) -> dict[str, object]:
+    """Validate the whole rename before writing any member; never merge providers."""
+    user_id = request_user_id(http_request)
+    active = configured_model_services(user_id)
+    if service_id not in active:
+        raise HTTPException(status_code=404, detail="服务商不存在")
+    old_name = str(active[service_id]["name"]).strip().casefold()
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="服务商名称不能为空")
+    if name.casefold() != old_name and any(str(item.get("name", "")).strip().casefold() == name.casefold() for item in active.values()):
+        raise HTTPException(status_code=409, detail="该服务商名称已存在，请使用其他名称；原服务商与模型未修改")
+    builtins, custom = load_model_services(user_id), load_custom_model_services(user_id)
+    for sid, item in {**builtins, **custom}.items():
+        if sid in active and str(item.get("name", "")).strip().casefold() == old_name:
+            item["name"] = name
+            if item.get("provider_only") and request.service_type is not None:
+                item["service_type"] = request.service_type
+    save_model_services(builtins, user_id)
+    save_custom_model_services(custom, user_id)
+    return {"ok": True, "name": name}
+
+
 @app.post("/api/model-services")
 def create_model_service(request: ModelServiceCreateRequest, http_request: Request) -> dict[str, object]:
     user_id = request_user_id(http_request)
@@ -2358,15 +2402,7 @@ def create_model_service(request: ModelServiceCreateRequest, http_request: Reque
     if request.service_type in {"大模型", "嵌入模型", "重排模型"} and not model:
         raise HTTPException(status_code=400, detail="大模型、嵌入模型和重排模型必须填写服务商提供的模型标识")
     custom = load_custom_model_services(user_id)
-    duplicate = any(
-        str(item.get("name", "")).casefold() == name.casefold()
-        and str(item.get("service_type", "综合服务")) == request.service_type
-        and str(item.get("model", "")).casefold() == model.casefold()
-        and str(item.get("endpoint_url", item.get("base_url", ""))).rstrip("/").casefold() == endpoint_url.casefold()
-        for item in custom.values()
-    )
-    if duplicate:
-        raise HTTPException(status_code=409, detail="同一服务商下已存在完全相同的模型与接口配置")
+    validate_model_identity(name, model, user_id)
     service_id = f"custom-{uuid4().hex[:12]}"
     item = {
         "id": service_id,
@@ -2418,6 +2454,9 @@ def update_model_service(service_id: str, request: ModelServiceUpdateRequest, ht
         current["service_type"] = request.service_type
     is_provider_only = bool(current.get("provider_only") or request.provider_only)
     if is_provider_only:
+        if any(sid != service_id and str(item.get("name", "")).strip().casefold() == str(current["name"]).strip().casefold()
+               for sid, item in configured_model_services(user_id).items()) and request.name is not None and request.name.strip().casefold() != str(configured_model_services(user_id)[service_id]["name"]).strip().casefold():
+            raise HTTPException(status_code=409, detail="该服务商名称已存在，请使用其他名称")
         current.update({"provider_only": True, "model": "", "api_key": "", "base_url": "", "endpoint_url": "", "enabled": request.enabled})
         if service_id in built_in_ids:
             save_model_services(services, user_id)
@@ -2429,6 +2468,7 @@ def update_model_service(service_id: str, request: ModelServiceUpdateRequest, ht
         current["model"] = model
     if current.get("service_type") in {"大模型", "嵌入模型", "重排模型"} and not str(current.get("model", "")).strip() and not request.clear_api_key and request.enabled:
         raise HTTPException(status_code=400, detail="大模型、嵌入模型和重排模型必须填写服务商提供的模型标识")
+    validate_model_identity(str(current["name"]), str(current.get("model", "")), user_id, service_id)
     api_key = request.api_key.strip()
     if api_key and len(api_key) < 8:
         raise HTTPException(status_code=400, detail="API Key 长度过短，请检查后再保存")
@@ -2661,6 +2701,7 @@ def upload_knowledge_base_documents(
     validate_knowledge_settings(knowledge_base.settings, user_id)
     directory = knowledge_base_directory(knowledge_base_id, user_id=user_id, create=True) / "documents"
     uploaded: list[UploadedFile] = []
+    prepared: list[tuple[str, bytes]] = []
     for item in request.files:
         filename = stored_knowledge_filename(item.filename)
         try:
@@ -2676,6 +2717,8 @@ def upload_knowledge_base_documents(
             raise HTTPException(status_code=400, detail=f"{filename} 不能为空")
         if len(content) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail=f"{filename} 超过 2 MB 限制")
+        prepared.append((filename, content))
+    for filename, content in prepared:
         destination = directory / filename
         if destination.exists():
             destination = directory / f"{destination.stem}-{uuid4().hex[:6]}{destination.suffix}"

@@ -196,6 +196,7 @@ export function createRuntime() {
           })().finally(() => { desktopStateWriter = null; });
           return desktopStateWriter;
         }
+        let phoneMobilePattern = /^1[3-9][0-9]{9}$/;
         let smsCountdown = 0;
         let smsTimer = null;
         let capsLockHintTimer = null;
@@ -362,14 +363,14 @@ export function createRuntime() {
           resetPasswordVisibility();
         }
         async function sendSmsCode() {
-          const phone = phoneNumber.value.trim();
-          if (!/^1[3-9]\d{9}$/.test(phone)) { showPhoneMessage('请输入有效的 11 位中国大陆手机号。'); phoneNumber.focus(); return; }
+          const phone = phoneNumber.value.trim().replace(/[\s-]/g, '').replace(/^\+86/, '');
+          if ((!/^1[3-9][0-9]{9}$/.test(phone) || !phoneMobilePattern.test(phone))) { showPhoneMessage('请输入正确的手机号'); phoneNumber.focus(); return; }
           sendSmsButton.disabled = true;
           try {
             const response = await nativeFetch('/api/auth/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, purpose: 'login' }) });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.detail || '验证码发送失败。');
-            const devHint = data.dev_code ? ` 开发模式验证码：${data.dev_code}` : '';
+            const devHint = data.dev_code ? ` 验证码：${data.dev_code}` : '';
             showPhoneMessage(`${data.message || '验证码已发送。'}${devHint}`, true);
             smsCountdown = Math.max(1, Number(data.resend_in) || 60);
             sendSmsButton.textContent = `${smsCountdown}s 后重发`;
@@ -386,9 +387,9 @@ export function createRuntime() {
         }
         async function submitPhoneAuth(event) {
           event.preventDefault();
-          const phone = phoneNumber.value.trim();
+          const phone = phoneNumber.value.trim().replace(/[\s-]/g, '').replace(/^\+86/, '');
           const code = phoneCode.value.trim();
-          if (!/^1[3-9]\d{9}$/.test(phone)) { showPhoneMessage('请输入有效的 11 位中国大陆手机号。'); return; }
+          if ((!/^1[3-9][0-9]{9}$/.test(phone) || !phoneMobilePattern.test(phone))) { showPhoneMessage('请输入正确的手机号'); return; }
           if (!/^\d{6}$/.test(code)) { showPhoneMessage('验证码必须是 6 位数字。'); return; }
           phoneSubmit.disabled = true;
           try {
@@ -645,6 +646,13 @@ export function createRuntime() {
               if (authMethod === 'phone') showPhoneMessage(data.detail || '请登录其他账户。');
               return;
             }
+            if (data.phone_mobile_pattern) phoneMobilePattern = new RegExp('^(?:' + data.phone_mobile_pattern + ')$');
+            const demoSms = data.sms_demo === true;
+            document.querySelector('[data-auth-method="phone"]').textContent = '手机验证码';
+            document.querySelector('#phoneModeHint').textContent = demoSms
+              ? '验证码将在下方显示，5 分钟内有效；不会发送短信。'
+              : '验证码 5 分钟内有效；未注册手机号验证后会自动创建账户。';
+            phoneSubmit.textContent = '验证码登录 / 自动注册';
             if (data.authenticated && data.user) {
               const remembered = readRememberedAuthIdentifiers();
               await finishAuth(data.user, remembered.preferredMethod);
@@ -835,7 +843,11 @@ export function createRuntime() {
              if (Array.isArray(parsed?.items) && !parsed?.conversations && !parsed?.state) throw new Error('所选文件是测试数据清单，不是对话备份。请先点击“导出当前对话 JSON”，再选择由本软件生成的 JSON 文件。');
             const restoredState = parsed?.format === 'personal-agent-conversation-backup' ? parsed.state : parsed;
              if (!restoredState || !Array.isArray(restoredState.conversations) || !restoredState.conversations.length) throw new Error('该 JSON 不是有效的对话备份：未找到 conversations。请使用“导出当前对话 JSON”生成的文件。');
-            const incoming = restoredState.conversations.filter((item) => item && item.id && Array.isArray(item.messages)).map((item) => ({ ...newConversation(), ...item, files: Array.isArray(item.files) ? item.files : [], knowledgeBaseIds: Array.isArray(item.knowledgeBaseIds) ? item.knowledgeBaseIds : [], executionMode: ['auto', 'plan'].includes(item.executionMode) ? item.executionMode : 'auto', chatModelId: typeof item.chatModelId === 'string' ? item.chatModelId : '', conversationInstructions: typeof item.conversationInstructions === 'string' ? item.conversationInstructions : '', responseStyle: ['balanced', 'concise', 'structured', 'coach'].includes(item.responseStyle) ? item.responseStyle : 'balanced', draft: typeof item.draft === 'string' ? item.draft : '', pinned: item.pinned === true, archived: item.archived === true }));
+            const knowledgeResponse = await fetch('/api/knowledge-bases');
+            if (!knowledgeResponse.ok) throw new Error('无法核验知识库，请稍后重新导入。');
+            knowledgeBases = await knowledgeResponse.json();
+            const validKnowledgeIds = new Set(knowledgeBases.map(base => base.id));
+            const incoming = restoredState.conversations.filter((item) => item && item.id && Array.isArray(item.messages)).map((item) => ({ ...newConversation(), ...item, files: Array.isArray(item.files) ? item.files : [], knowledgeBaseIds: Array.isArray(item.knowledgeBaseIds) ? item.knowledgeBaseIds.filter(id => validKnowledgeIds.has(id)) : [], executionMode: ['auto', 'plan'].includes(item.executionMode) ? item.executionMode : 'auto', chatModelId: typeof item.chatModelId === 'string' ? item.chatModelId : '', conversationInstructions: typeof item.conversationInstructions === 'string' ? item.conversationInstructions : '', responseStyle: ['balanced', 'concise', 'structured', 'coach'].includes(item.responseStyle) ? item.responseStyle : 'balanced', draft: typeof item.draft === 'string' ? item.draft : '', pinned: item.pinned === true, archived: item.archived === true }));
             if (!incoming.length) throw new Error('备份中没有结构有效的对话记录。');
             const byId = new Map(state.conversations.map((item) => [item.id, item])); incoming.forEach((item) => byId.set(item.id, item)); state.conversations = [...byId.values()]; state.activeId = restoredState.activeId && byId.has(restoredState.activeId) ? restoredState.activeId : incoming[0].id; saveState(); render(); refreshAttachments(); showToast(`已恢复 ${incoming.length} 个对话。`);
           } catch (error) { showToast(error.message || '备份文件无法读取'); }
@@ -1024,7 +1036,7 @@ export function createRuntime() {
           if (attachmentUploads.has(current.id)) { showToast('图片或附件还在上传，请完成后再发送。'); return; }
           if (Array.from(content).length > 1000) { showToast('问题最多1000个字，当前内容超出限制。请缩短文字后发送；原文已保留。附件上传按文件大小限制，不按这1000字限制。'); return; }
           const conversationId = current.id;
-          const execution = current.executionMode || 'auto';
+          const execution = 'auto'; // Plan mode is temporarily hidden, including imported conversations.
           const editingIndex = current.editingMessageId ? current.messages.findIndex((message) => message.id === current.editingMessageId && message.role === 'user') : -1;
           const pendingAttachmentNames = (current.pendingAttachmentNames || []).filter((name) => (current.files || []).some((file) => file.filename === name));
           const originalAttachments = editingIndex >= 0 && Array.isArray(current.messages[editingIndex].attachments) ? current.messages[editingIndex].attachments : [];
@@ -1034,7 +1046,7 @@ export function createRuntime() {
           const requestQuestion = content || '请阅读并说明随本条消息发送的附件内容。';
           const historyMessages = editingIndex >= 0 ? current.messages.slice(0, editingIndex) : current.messages;
           const history = buildChatHistory(historyMessages);
-          const knowledgeBaseIds = current.knowledgeBaseIds || [];
+          const knowledgeBaseIds = (current.knowledgeBaseIds || []).filter(id => knowledgeBaseById(id));
           const requestedChatModelId = current.chatModelId || defaultChatModelId || '';
           sending = true; activeRequestController = new AbortController(); ask.disabled = false; ask.textContent = '■'; ask.title = '停止生成';
           current.draft = '';
@@ -1488,11 +1500,12 @@ export function createRuntime() {
           error.textContent = '';
           if (providerMode) {
             const nameInput = document.querySelector(editing ? '#modelServiceEditName' : '#modelServiceName');
-            const providerType = document.querySelector(editing ? '#modelServiceEditProviderType' : '#modelServiceProviderType');
             nameInput.setCustomValidity(nameInput.value.trim() ? '' : '请填写服务商名称。');
-            providerType.setCustomValidity(providerType.value ? '' : '请选择服务商类型。');
             if (!nameInput.value.trim()) { error.textContent = '请填写服务商名称。'; nameInput.reportValidity(); nameInput.focus(); return false; }
-            if (!providerType.value) { error.textContent = '请选择服务商类型。'; providerType.reportValidity(); providerType.focus(); return false; }
+            const memberIds = new Set(editing ? JSON.parse(modelServiceEditModal.dataset.providerIds || '[]') : []);
+            if (modelServices.some(item => !memberIds.has(item.id) && item.name.trim().toLowerCase() === nameInput.value.trim().toLowerCase())) {
+              error.textContent = '该服务商名称已存在，请使用其他名称。'; nameInput.focus(); return false;
+            }
             return form.reportValidity();
           }
           const typeInput = document.querySelector(editing ? '#modelServiceEditType' : '#modelServiceType');
@@ -1509,6 +1522,11 @@ export function createRuntime() {
             return false;
           }
           modelInput.setCustomValidity('');
+          const provider = selectedProvider(providerInput);
+          const excludedId = editing ? document.querySelector('#modelServiceEditId').value : '';
+          if (modelInput.value.trim() && modelServices.some(item => item.id !== excludedId && !item.provider_only && item.name.trim().toLowerCase() === provider?.name.trim().toLowerCase() && (item.model || '').trim().toLowerCase() === modelInput.value.trim().toLowerCase())) {
+            error.textContent = '该服务商下已存在同名模型，请使用不同的模型标识。'; modelInput.focus(); return false;
+          }
           if (!urlInput.value.trim()) { error.textContent = '请填写完整 API 接口地址。'; urlInput.reportValidity(); urlInput.focus(); return false; }
           return form.reportValidity();
         }
@@ -1579,7 +1597,7 @@ export function createRuntime() {
           setModelDialogFields(modelServiceCreateModal, addingModel ? 'model' : 'provider');
           modelServiceCreateForm.setAttribute('aria-label', addingModel ? `添加 ${provider.name} 模型` : '添加自定义服务商');
           document.querySelector('#modelServiceCreateTitle').textContent = addingModel ? `添加 ${provider.name} 模型` : '添加服务商';
-          document.querySelector('#modelServiceCreateSubtitle').textContent = addingModel ? '选择所属服务商并填写模型连接资料。' : '只需填写名称和类型；模型在右侧单独添加。';
+          document.querySelector('#modelServiceCreateSubtitle').textContent = addingModel ? '选择所属服务商并填写模型连接资料。' : '只需填写服务商名称；模型在右侧单独添加。';
           document.querySelector('#submitModelServiceCreate').textContent = addingModel ? '添加模型' : '添加服务商';
           const nameInput = document.querySelector('#modelServiceName');
           const typeInput = document.querySelector('#modelServiceType');
@@ -1587,7 +1605,6 @@ export function createRuntime() {
           const source = provider?.models?.[0] || provider?.services?.find((service) => !service.provider_only) || null;
           const providerSelect = document.querySelector('#modelServiceProvider');
           nameInput.value = addingModel ? provider.name : '';
-          document.querySelector('#modelServiceProviderType').value = addingModel ? '' : (serviceType === '综合服务' ? '' : serviceType);
           providerSelect.innerHTML = providerSelectOptions(source?.id || provider?.services?.[0]?.id || '');
           syncBoundedProviderSelect(providerSelect);
           typeInput.value = addingModel ? (source?.service_type || (provider?.providerType === '综合服务' ? '大模型' : provider?.providerType) || '大模型') : '大模型';
@@ -1634,12 +1651,12 @@ export function createRuntime() {
           const provider = addingModel ? selectedProvider(document.querySelector('#modelServiceProvider')) : null;
           const payload = addingModel
             ? { name: provider.name, service_type: document.querySelector('#modelServiceType').value, model: document.querySelector('#modelServiceModel').value.trim(), base_url: document.querySelector('#modelServiceUrl').value.trim(), api_key: document.querySelector('#modelServiceKey').value.trim(), description: document.querySelector('#modelServiceCreateDescription').value.trim(), provider_only: false }
-            : { name: document.querySelector('#modelServiceName').value.trim(), service_type: document.querySelector('#modelServiceProviderType').value, model: '', base_url: '', api_key: '', description: '', provider_only: true };
+            : { name: document.querySelector('#modelServiceName').value.trim(), service_type: '综合服务', model: '', base_url: '', api_key: '', description: '', provider_only: true };
           try {
             const response = await fetch('/api/model-services', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const data = await response.json(); if (!response.ok) throw new Error(data.detail || '添加服务商失败');
             closeModelServiceCreateDialog(); activeModelServiceId = data.service?.id || ''; await refreshModelServices(); await loadChatModels(); showToast(addingModel ? `模型已添加到 ${provider.name}。` : '服务商已添加，请在右侧继续添加模型。');
-          } catch (error) { showToast(error.message || '添加服务商失败'); }
+          } catch (error) { document.querySelector('#modelServiceCreateError').textContent = error.message || '添加服务商失败'; }
         }
         async function deleteModelService(service) {
           if (!service || !(await confirmConversationDeletion(service.model || service.name, { heading: '删除这个模型？', description: '确认后将删除该模型的连接配置。服务商和其他模型会保留。', action: '删除模型' }))) return;
@@ -1677,7 +1694,7 @@ export function createRuntime() {
           modelServiceEditModal.dataset.providerIds = JSON.stringify((provider?.services || [service]).map((item) => item.id));
           modelServiceEditModal.dataset.builtIn = service.custom ? 'false' : 'true';
           document.querySelector('#modelServiceEditTitle').textContent = editingProvider ? '编辑服务商' : '编辑模型';
-          document.querySelector('#modelServiceEditSubtitle').textContent = editingProvider ? '只编辑服务商名称和类型；组内模型连接保持不变。' : '可更换所属服务商，并修改当前模型的连接资料。';
+          document.querySelector('#modelServiceEditSubtitle').textContent = editingProvider ? '只编辑服务商名称；组内模型连接保持不变。' : '可更换所属服务商，并修改当前模型的连接资料。';
           document.querySelector('#submitModelServiceEdit').textContent = editingProvider ? '保存服务商' : '保存模型';
           document.querySelector('#modelServiceEditId').value = service.id;
           const nameInput = document.querySelector('#modelServiceEditName');
@@ -1685,7 +1702,6 @@ export function createRuntime() {
           const modelInput = document.querySelector('#modelServiceEditModel');
           const descriptionInput = document.querySelector('#modelServiceEditDescription');
           nameInput.value = service.name || '';
-          document.querySelector('#modelServiceEditProviderType').value = provider?.providerType || service.service_type || '综合服务';
           document.querySelector('#modelServiceEditProvider').innerHTML = providerSelectOptions(service.id);
           syncBoundedProviderSelect(document.querySelector('#modelServiceEditProvider'));
           typeInput.value = service.service_type || '综合服务';
@@ -1705,20 +1721,16 @@ export function createRuntime() {
           const editingProvider = modelServiceEditModal.dataset.mode === 'provider';
           const keyInput = document.querySelector('#modelServiceEditKey');
           try {
-            const ids = editingProvider ? JSON.parse(modelServiceEditModal.dataset.providerIds || '[]') : [id];
-            for (const serviceId of ids) {
-              const service = modelServices.find((item) => item.id === serviceId);
-              if (!service) continue;
-              const targetProvider = editingProvider ? null : selectedProvider(document.querySelector('#modelServiceEditProvider'));
-              const payload = editingProvider
-                ? { name: document.querySelector('#modelServiceEditName').value.trim(), base_url: service.endpoint_url || service.base_url || '', api_key: '', description: service.description || '', enabled: service.enabled !== false, service_type: service.provider_only ? document.querySelector('#modelServiceEditProviderType').value : service.service_type, model: service.model || '', provider_only: Boolean(service.provider_only) }
-                : { name: targetProvider.name, base_url: document.querySelector('#modelServiceEditUrl').value.trim(), api_key: keyInput.dataset.keyLoaded === 'true' ? keyInput.value.trim() : '', description: document.querySelector('#modelServiceEditDescription').value.trim(), enabled: true, service_type: document.querySelector('#modelServiceEditType').value, model: document.querySelector('#modelServiceEditModel').value.trim(), provider_only: false };
-              const response = await fetch(`/api/model-services/${encodeURIComponent(serviceId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-              const data = await response.json(); if (!response.ok) throw new Error(data.detail || '保存模型服务失败');
-            }
+            const targetProvider = editingProvider ? null : selectedProvider(document.querySelector('#modelServiceEditProvider'));
+            const payload = editingProvider
+              ? { name: document.querySelector('#modelServiceEditName').value.trim() }
+              : { name: targetProvider.name, base_url: document.querySelector('#modelServiceEditUrl').value.trim(), api_key: keyInput.dataset.keyLoaded === 'true' ? keyInput.value.trim() : '', description: document.querySelector('#modelServiceEditDescription').value.trim(), enabled: true, service_type: document.querySelector('#modelServiceEditType').value, model: document.querySelector('#modelServiceEditModel').value.trim(), provider_only: false };
+            const resource = editingProvider ? 'model-providers' : 'model-services';
+            const response = await fetch(`/api/${resource}/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const data = await response.json(); if (!response.ok) throw new Error(data.detail || '保存模型服务失败');
             closeModelServiceEditDialog(); await refreshModelServices(); await loadChatModels(); showToast(editingProvider ? '服务商资料已同步到组内模型。' : '模型配置已更新。');
           }
-          catch (error) { showToast(error.message || '保存服务商资料失败'); }
+          catch (error) { document.querySelector('#modelServiceEditError').textContent = error.message || '保存服务商资料失败'; }
         }
         function settingsPageHeader(title, description, action = '') {
           const visuals = {
@@ -1837,7 +1849,7 @@ export function createRuntime() {
         }
         function renderKnowledgeBases() {
           const current = activeConversation();
-          const selected = new Set(current?.knowledgeBaseIds || []);
+          const selected = new Set((current?.knowledgeBaseIds || []).filter(id => knowledgeBaseById(id)));
           knowledgeButton.textContent = selected.size ? `▤ 知识库 · ${selected.size}` : '▤ 知识库';
           renderContextLens();
           if (knowledgeModal.hidden) return;
@@ -1858,7 +1870,7 @@ export function createRuntime() {
           const documents = loadedDocumentKnowledgeBaseId === base.id ? knowledgeDocuments : [];
           selectedKnowledgeDocuments = new Set([...selectedKnowledgeDocuments].filter((name) => documents.some((item) => item.filename === name)));
           const selectedCount = selectedKnowledgeDocuments.size;
-          const table = documents.length ? `<div class="data-source-header"><strong>数据源 · ${documents.length}</strong><button class="delete-documents" data-delete-documents type="button" ${selectedCount ? '' : 'disabled'}>${selectedCount ? `删除已选 (${selectedCount})` : '删除已选'}</button></div><table class="document-table"><thead><tr><th><input class="document-check" data-document-select-all type="checkbox" ${documents.length && selectedCount === documents.length ? 'checked' : ''} aria-label="选择全部数据源" /></th><th>名称</th><th>类型</th><th>状态</th><th>更新时间</th><th aria-label="操作"></th></tr></thead><tbody>${documents.map((document) => `<tr><td><input class="document-check" data-document-select="${escapeAttribute(document.filename)}" type="checkbox" ${selectedKnowledgeDocuments.has(document.filename) ? 'checked' : ''} aria-label="选择 ${escapeAttribute(document.filename)}" /></td><td title="${escapeAttribute(document.filename)}">▧&nbsp; ${escapeHtml(document.filename)}</td><td>文件</td><td><span class="document-ready">✓ 就绪</span></td><td>${escapeHtml(formatKnowledgeTime(document.updated_at))}</td><td><div class="document-row-actions"><button class="document-more" data-document-menu type="button" aria-label="打开文档操作">•••</button><div class="document-action-menu" hidden><button data-document-action="source" data-document-name="${escapeAttribute(document.filename)}" type="button">预览原文</button><button data-document-action="chunks" data-document-name="${escapeAttribute(document.filename)}" type="button">查看 Chunks</button><button data-document-action="reparse" data-document-name="${escapeAttribute(document.filename)}" type="button">重新解析</button></div></div></td></tr>`).join('')}</tbody></table>` : `<div class="empty-knowledge"><span class="empty-icon">▧</span><h3>暂无数据源</h3><p>上传第一个数据源，便可用于当前对话检索。</p><div class="empty-source-actions"><button class="outline-button" data-source-action="file" type="button">▧ 文件</button><button class="outline-button" data-source-action="directory" type="button">▱ 目录</button><button class="outline-button" data-source-action="note" type="button" disabled title="将在后续版本支持">▤ 笔记</button><button class="outline-button" data-source-action="link" type="button" disabled title="将在后续版本支持">⌁ 链接</button></div></div>`;
+          const table = documents.length ? `<div class="data-source-header"><strong>数据源 · ${documents.length}</strong><button class="delete-documents" data-delete-documents type="button" ${selectedCount ? '' : 'disabled'}>${selectedCount ? `删除已选 (${selectedCount})` : '删除已选'}</button></div><div class="document-table-scroll" tabindex="0" aria-label="知识库文档列表"><table class="document-table"><thead><tr><th><input class="document-check" data-document-select-all type="checkbox" ${documents.length && selectedCount === documents.length ? 'checked' : ''} aria-label="选择全部数据源" /></th><th>名称</th><th>类型</th><th>状态</th><th>更新时间</th><th aria-label="操作"></th></tr></thead><tbody>${documents.map((document) => `<tr><td><input class="document-check" data-document-select="${escapeAttribute(document.filename)}" type="checkbox" ${selectedKnowledgeDocuments.has(document.filename) ? 'checked' : ''} aria-label="选择 ${escapeAttribute(document.filename)}" /></td><td title="${escapeAttribute(document.filename)}">▧&nbsp; ${escapeHtml(document.filename)}</td><td>文件</td><td><span class="document-ready">✓ 就绪</span></td><td>${escapeHtml(formatKnowledgeTime(document.updated_at))}</td><td><div class="document-row-actions"><button class="document-more" data-document-menu type="button" aria-label="打开文档操作">•••</button><div class="document-action-menu" hidden><button data-document-action="source" data-document-name="${escapeAttribute(document.filename)}" type="button">预览原文</button><button data-document-action="chunks" data-document-name="${escapeAttribute(document.filename)}" type="button">查看 Chunks</button><button data-document-action="reparse" data-document-name="${escapeAttribute(document.filename)}" type="button">重新解析</button></div></div></td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-knowledge"><span class="empty-icon">▧</span><h3>暂无数据源</h3><p>上传第一个数据源，便可用于当前对话检索。</p><div class="empty-source-actions"><button class="outline-button" data-source-action="file" type="button">▧ 文件</button><button class="outline-button" data-source-action="directory" type="button">▱ 目录</button><button class="outline-button" data-source-action="note" type="button" disabled title="将在后续版本支持">▤ 笔记</button><button class="outline-button" data-source-action="link" type="button" disabled title="将在后续版本支持">⌁ 链接</button></div></div>`;
           knowledgeContent.innerHTML = `<div class="knowledge-content-inner"><div class="knowledge-title-row"><div><h2>${escapeHtml(base.name)}</h2><p class="knowledge-updated">更新于 ${escapeHtml(formatKnowledgeTime(base.updated_at))}</p></div><button class="outline-button" data-open-settings type="button">☷ 设置</button></div><div class="knowledge-toolbar"><div class="knowledge-toolbar-left"><span>资料只在你勾选它的对话中参与检索</span><label class="use-knowledge"><input data-kb-select="${base.id}" type="checkbox" ${selected.has(base.id) ? 'checked' : ''} /> 当前对话使用</label></div><div class="data-source-wrap"><button class="outline-button" data-toggle-sources type="button">＋ 添加数据源</button><div class="source-menu" id="sourceMenu" hidden><button data-source-action="file" type="button">▧ 上传文件</button><button data-source-action="directory" type="button">▱ 上传目录</button><button disabled type="button">▤ 导入笔记（待支持）</button><button disabled type="button">⌁ 添加链接（待支持）</button></div></div></div>${table}</div>`;
         }
         function renderKnowledgeSettings(base) {
@@ -1963,19 +1975,30 @@ export function createRuntime() {
         async function uploadKnowledgeDocuments(files) {
           const id = knowledgeFileInput.dataset.knowledgeBaseId;
           const selected = Array.from(files || []); if (!id || !selected.length) return;
-          if (selected.length > 8) { showToast('一次最多上传 8 个文档。'); return; }
           const empty = selected.find((file) => file.size <= 0);
           if (empty) { showToast(`${empty.name} 是空文件，不能添加到知识库。`); return; }
           const oversized = selected.find((file) => file.size > MAX_FILE_BYTES);
           if (oversized) { showToast(`${oversized.name} 超过 2 MB 限制。`); return; }
+          if (uploadKnowledgeDocuments.busy) { showToast('文档正在上传，请稍候。'); return; }
+          uploadKnowledgeDocuments.busy = true;
+          let added = 0;
           try {
-            const payload = await Promise.all(selected.map(async (file) => ({ filename: file.name, data_base64: await fileAsBase64(file) })));
-            const response = await fetch(`/api/knowledge-bases/${encodeURIComponent(id)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: payload }) });
-            const data = await response.json(); if (!response.ok) throw new Error(data.detail || '上传知识库文档失败');
-            await refreshKnowledgeBases(); showToast(`已添加 ${data.length} 个知识库文档。`);
-          } catch (error) { showToast(error.message || '上传知识库文档失败'); }
-          finally { knowledgeFileInput.value = ''; knowledgeFileInput.dataset.knowledgeBaseId = ''; }
+            for (let offset = 0; offset < selected.length; offset += 8) {
+              showToast(`正在上传知识库文档：${added} / ${selected.length}`);
+              const payload = await Promise.all(selected.slice(offset, offset + 8).map(async file => ({ filename: file.name, data_base64: await fileAsBase64(file) })));
+              const response = await fetch(`/api/knowledge-bases/${encodeURIComponent(id)}/documents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: payload }) });
+              const data = await response.json(); if (!response.ok) throw new Error(data.detail || '上传知识库文档失败');
+              added += data.length;
+            }
+            showToast(`已添加 ${added} 个知识库文档。`);
+          } catch (error) { showToast(`已添加 ${added} / ${selected.length} 个文档；${error.message || '上传失败'}。其余文件可重新选择上传。`); }
+          finally {
+            uploadKnowledgeDocuments.busy = false;
+            knowledgeFileInput.value = ''; knowledgeFileInput.dataset.knowledgeBaseId = '';
+            await refreshKnowledgeBases();
+          }
         }
+
         async function removeKnowledgeBase(id) {
           const base = knowledgeBaseById(id);
           if (!base || !window.confirm(`删除知识库“${base.name}”及其全部文档？此操作无法恢复。`)) return;
@@ -2782,9 +2805,7 @@ export function createRuntime() {
         listen(document.querySelector('#modelServiceType'), 'change', () => updateModelServiceRequirement('create'));
         listen(document.querySelector('#modelServiceEditType'), 'change', () => updateModelServiceRequirement('edit'));
         listen(document.querySelector('#modelServiceName'), 'input', (event) => { event.target.setCustomValidity(''); document.querySelector('#modelServiceCreateError').textContent = ''; });
-        listen(document.querySelector('#modelServiceProviderType'), 'change', (event) => { event.target.setCustomValidity(''); document.querySelector('#modelServiceCreateError').textContent = ''; });
         listen(document.querySelector('#modelServiceEditName'), 'input', (event) => { event.target.setCustomValidity(''); document.querySelector('#modelServiceEditError').textContent = ''; });
-        listen(document.querySelector('#modelServiceEditProviderType'), 'change', (event) => { event.target.setCustomValidity(''); document.querySelector('#modelServiceEditError').textContent = ''; });
         listen(document.querySelector('#modelServiceProvider'), 'change', () => { document.querySelector('#modelServiceCreateError').textContent = ''; });
         listen(document.querySelector('#modelServiceEditProvider'), 'change', () => { document.querySelector('#modelServiceEditError').textContent = ''; });
         setupBoundedProviderSelect(document.querySelector('#modelServiceProvider'));

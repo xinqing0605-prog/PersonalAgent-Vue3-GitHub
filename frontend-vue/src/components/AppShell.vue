@@ -13,7 +13,7 @@ import AttachmentList from './AttachmentList.vue'
           <div class="conversation-heading"><span>对话</span><span id="conversationCount">仅本机保存</span></div>
           <div class="conversation-tools"><input class="conversation-search" id="conversationSearch" type="search" placeholder="搜索会话…" autocomplete="off" /><button class="conversation-filter" id="toggleArchived" type="button" title="只显示已归档对话" aria-pressed="false">显示归档</button></div>
           <ConversationList />
-          <button class="app-settings-button" id="openTasks" type="button">☑ 我的任务</button>
+          <button class="app-settings-button" id="openTasks" hidden type="button">☑ 我的任务</button>
           <button class="app-settings-button" id="openNotes" type="button">▤ 我的笔记</button>
           <button class="app-settings-button" id="exportState" type="button">⇩ 导出当前对话 JSON</button>
           <button class="app-settings-button" id="importState" type="button">⇧ 导入对话 JSON</button>
@@ -24,7 +24,7 @@ import AttachmentList from './AttachmentList.vue'
         <main class="chat-panel">
           <header class="chat-header">
             <div class="agent-title"><span class="avatar">◉</span><div><strong>个人知识库与事务助手</strong><span>连续对话 · 本地工具</span></div></div>
-            <div class="header-actions"><button class="conversation-preferences-button" id="openConversationPreferences" type="button" title="设置当前对话的回答偏好">⚙ 对话偏好</button><button class="lens-button" id="openContextLens" type="button" title="查看当前对话的焦点、资料和下一步建议">✦ 对话概览</button><button class="knowledge-button" id="knowledgeButton" type="button">▤ 知识库</button><button class="model-pill" id="modelStatus" type="button" title="切换大模型" aria-haspopup="dialog" aria-expanded="false">正在检查模型配置…</button><div class="account-menu" id="accountMenu" hidden><button class="account-button" id="accountButton" type="button" aria-haspopup="menu" aria-expanded="false"><span class="account-avatar" id="accountAvatar">用</span><span class="account-name" id="accountName">本机账户</span><span class="account-chevron">⌄</span></button><div class="account-dropdown" id="accountDropdown" hidden><div class="account-dropdown-info"><strong id="accountDropdownName">本机账户</strong><small id="accountDropdownMeta">本地账户 · 数据独立保存</small></div><button id="accountProfileButton" type="button">编辑个人资料</button><button id="accountThemeButton" type="button">外观与主题</button><button class="danger" id="accountLogoutButton" type="button">退出登录</button></div></div></div>
+            <div class="header-actions"><button class="conversation-preferences-button" id="openConversationPreferences" hidden type="button" title="设置当前对话的回答偏好">⚙ 对话偏好</button><button class="lens-button" id="openContextLens" type="button" title="查看当前对话的焦点、资料和下一步建议">✦ 对话概览</button><button class="knowledge-button" id="knowledgeButton" type="button">▤ 知识库</button><button class="model-pill" id="modelStatus" type="button" title="切换大模型" aria-haspopup="dialog" aria-expanded="false">正在检查模型配置…</button><div class="account-menu" id="accountMenu" hidden><button class="account-button" id="accountButton" type="button" aria-haspopup="menu" aria-expanded="false"><span class="account-avatar" id="accountAvatar">用</span><span class="account-name" id="accountName">本机账户</span><span class="account-chevron">⌄</span></button><div class="account-dropdown" id="accountDropdown" hidden><div class="account-dropdown-info"><strong id="accountDropdownName">本机账户</strong><small id="accountDropdownMeta">本地账户 · 数据独立保存</small></div><button id="accountProfileButton" type="button">编辑个人资料</button><button id="accountThemeButton" type="button">外观与主题</button><button class="danger" id="accountLogoutButton" type="button">退出登录</button></div></div></div>
           </header>
           <aside class="model-picker" id="modelPicker" hidden aria-label="选择大模型">
             <header class="model-picker-header"><div><strong>选择大模型</strong><small>当前选择只作用于本对话，发送前可随时切换</small></div><button class="model-picker-close" id="closeModelPicker" type="button" aria-label="关闭模型选择">×</button></header>
@@ -71,7 +71,7 @@ import AttachmentList from './AttachmentList.vue'
               <textarea id="question" rows="1" placeholder="输入消息或粘贴图片，Enter 发送；Shift + Enter 换行" aria-label="消息输入框" title="支持粘贴图片；每条消息最多 4 张图片，每张不超过 16 MB"></textarea>
               <div class="composer-actions">
                 <button class="icon-button" id="attach" type="button" title="上传当前对话的文件或图片">＋</button>
-                <button class="mode-toggle" id="executionMode" type="button" title="切换自动执行或计划模式">自动执行</button>
+                <button class="mode-toggle" id="executionMode" hidden type="button" title="切换自动执行或计划模式">自动执行</button>
                 <button class="send-button" id="ask" type="button" title="发送">↑</button>
               </div>
             </div>

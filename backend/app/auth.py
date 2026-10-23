@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from phonenumbers import PhoneMetadata
+
 from .settings import SETTINGS
 
 
@@ -28,8 +30,9 @@ SESSION_COOKIE = SETTINGS.session_cookie_name
 SESSION_TTL_DAYS = SETTINGS.session_ttl_days
 PBKDF2_ITERATIONS = 310_000
 USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,15}$")
-PHONE_PATTERN = re.compile(r"^1[3-9]\d{9}$")
-SMS_CODE_PATTERN = re.compile(r"^\d{6}$")
+PHONE_PATTERN = re.compile(r"^1[3-9][0-9]{9}$")
+PHONE_MOBILE_PATTERN = PhoneMetadata.metadata_for_region("CN").mobile.national_number_pattern
+SMS_CODE_PATTERN = re.compile(r"^[0-9]{6}$")
 PASSWORD_SPECIAL_PATTERN = re.compile(r"[!@#$%^&*()_+\-=\[\]{};:'\",.<>/?\\|`~]")
 SMS_CODE_TTL_SECONDS = 300
 SMS_RESEND_INTERVAL_SECONDS = 60
@@ -164,8 +167,8 @@ def normalize_phone(phone: str) -> str:
     value = re.sub(r"[\s-]", "", phone.strip())
     if value.startswith("+86"):
         value = value[3:]
-    if not PHONE_PATTERN.fullmatch(value):
-        raise ValueError("请输入有效的 11 位中国大陆手机号。")
+    if not PHONE_PATTERN.fullmatch(value) or not re.fullmatch(PHONE_MOBILE_PATTERN, value):
+        raise ValueError("请输入正确的手机号")
     return value
 
 

@@ -71,7 +71,7 @@ function uniqueTools(tools: string[] = []) {
           </details>
           <div v-if="message.error || (message.plan && !message.streaming) || (message.content && !message.streaming && !message.error) || (message.interrupted && message.relatedUserMessageId)" class="message-actions">
             <button v-if="message.error" class="message-retry" :data-retry-message="message.question || ''" type="button">↻ 重试这条消息</button>
-            <button v-if="message.plan && !message.streaming" class="message-retry" :data-approve-plan="message.question || ''" type="button">✓ 批准计划并执行</button>
+            <button v-if="false" class="message-retry" :data-approve-plan="message.question || ''" type="button">✓ 批准计划并执行</button>
             <button v-if="message.content && !message.streaming && !message.error" class="message-action" :data-save-note="message.id" type="button">⌑ 保存为笔记</button>
             <button v-if="message.interrupted && message.relatedUserMessageId" class="message-action" :data-edit-interrupted="message.relatedUserMessageId" type="button">✎ 编辑原问题</button>
           </div>

@@ -35,6 +35,7 @@
       .auth-submit:hover { background: #0d665b; }
       .auth-submit:disabled { cursor: wait; opacity: .62; }
       .auth-switch { display: block; width: 100%; margin-top: 14px; padding: 8px; color: #397369; background: transparent; border: 0; font-size: 12px; }
+      .auth-switch[hidden] { display: none; }
       .auth-switch:hover { color: #075f52; text-decoration: underline; }
       .auth-message { min-height: 18px; margin-top: 13px; color: #b42318; font-size: 12px; line-height: 1.5; }
       .auth-message.success { color: #027a48; }
@@ -1060,3 +1061,13 @@
       .delete-conversation-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:22px; }
       .delete-conversation-actions button { padding:9px 16px; background:white; border:1px solid #ccdcd5; border-radius:8px; }
       .delete-conversation-actions .confirm-delete { background:#b8322d; color:white; border-color:#b8322d; }
+
+/* Keep knowledge controls visible while browsing long document lists. */
+.knowledge-content { min-height: 0; overflow: hidden; }
+.knowledge-content-inner { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.knowledge-content-inner.empty-knowledge { align-items: center; justify-content: center; }
+.knowledge-content-inner.empty-knowledge > [data-open-create] { width: auto; max-width: 100%; align-self: center; }
+.knowledge-title-row, .knowledge-toolbar, .data-source-header { flex-shrink: 0; }
+.document-table-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-bottom: 96px; }
+.document-table thead { position: sticky; top: 0; z-index: 2; background: #fff; }
+#openTasks[hidden], #openConversationPreferences[hidden], #executionMode[hidden] { display: none !important; }

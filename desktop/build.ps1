@@ -47,7 +47,7 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 & $Python -B -m PyInstaller --noconfirm --clean --log-level WARN --onedir --windowed `
     --name PersonalAgent --paths $ProjectRoot --workpath $Build --distpath $Dist --specpath $Build `
-    --collect-all PIL --collect-all pystray --collect-all webview `
+    --collect-all PIL --collect-all pystray --collect-all webview --hidden-import phonenumbers.data.region_CN `
     --add-data "$FrontendDist;frontend" (Join-Path $PSScriptRoot 'desktop_app.py')
 if ($LASTEXITCODE -ne 0) { throw "打包失败：$LASTEXITCODE" }
 $PackagedFrontend = Join-Path $Package '_internal\frontend\index.html'
