@@ -12,6 +12,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const tasks = shallowRef<Task[]>([])
   const notesStatus = ref('')
   const notesError = ref(false)
+  const notesLoaded = ref(false)
   const tasksStatus = ref('')
   const tasksError = ref(false)
   let handler: ((action: RuntimeAction, id: string, selected?: boolean) => void) | undefined
@@ -26,8 +27,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     notes.value = []
     tasks.value = []
     notesStatus.value = ''
+    notesError.value = false
+    notesLoaded.value = false
     tasksStatus.value = ''
   }
-  return { current, conversations, attachments, selectedFiles, notes, tasks, notesStatus, notesError,
+  return { current, conversations, attachments, selectedFiles, notes, tasks, notesStatus, notesError, notesLoaded,
     tasksStatus, tasksError, connect, dispatch, reset }
 })

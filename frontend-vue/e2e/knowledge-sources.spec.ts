@@ -1,0 +1,90 @@
+import { test, expect } from '@playwright/test'
+
+// E2E_BASE_URL can point to an isolated packaged desktop server.
+test('knowledge menus, note import and select-all deletion work in the shipped UI', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('dialog', dialog => dialog.accept())
+  await page.goto('/')
+  if (!(await page.locator('#authConfirmLabel').isVisible())) await page.locator('#authSwitch').click()
+  await page.locator('#authUsername').fill('Sources' + Date.now().toString(36))
+  await page.locator('#authPassword').fill('Safe1234!')
+  await page.locator('#authConfirmPassword').fill('Safe1234!')
+  await page.locator('#authSubmit').click()
+  await expect(page.locator('#authScreen')).toBeHidden()
+  const response = await page.request.post('/api/knowledge-bases', { data: { name: '数据源验收' } })
+  expect(response.ok()).toBeTruthy()
+  const base = await response.json()
+  const url = `/api/knowledge-bases/${base.id}`
+  await page.locator('#knowledgeButton').click()
+  await expect(page.locator('#knowledgeContent [data-source-action="link"]')).toHaveCount(0)
+  await page.locator('#knowledgeContent [data-source-action="note"]:visible').click()
+  await expect(page.locator('#knowledgeNoteChoices')).toContainText('暂无笔记')
+  await expect(page.locator('#submitKnowledgeNoteImport')).toBeDisabled()
+  await page.locator('#cancelKnowledgeNoteImport').click()
+  for (const title of ['售后规则', '安装说明']) {
+    expect((await page.request.post('/api/notes', { data: { title, content: title + '：这是需要被知识库检索到的文字。' } })).ok()).toBeTruthy()
+  }
+  await page.locator('#knowledgeContent [data-source-action="note"]:visible').click()
+  await expect(page.locator('[data-import-note]')).toHaveCount(2)
+  for (const input of await page.locator('[data-import-note]').all()) await input.check()
+  await page.screenshot({ path: test.info().outputPath('note-import-picker.png') })
+  await page.locator('#submitKnowledgeNoteImport').click()
+  await expect(page.locator('#knowledgeNoteImport')).not.toBeVisible()
+  await expect(page.locator('.document-table tbody tr')).toHaveCount(2)
+  const imported = (await (await page.request.get(url + '/documents')).json()).documents
+  expect((await (await page.request.get(url + '/documents/' + encodeURIComponent(imported[0].filename) + '/source')).json()).content).toContain('知识库检索')
+
+  await page.locator('[data-toggle-sources]').click()
+  const menu = page.locator('#sourceMenu')
+  await expect(menu.locator('button')).toHaveCount(3)
+  await expect(menu).not.toContainText('待支持')
+  for (const action of ['file', 'directory', 'note']) {
+    const button = menu.locator(`[data-source-action="${action}"]`)
+    await expect(button).toBeVisible()
+    expect(await button.evaluate(el => {
+      const box = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
+    })).toBe(true)
+  }
+  await page.screenshot({ path: test.info().outputPath('source-menu-with-documents.png') })
+  const chooserPromise = page.waitForEvent('filechooser')
+  await menu.locator('[data-source-action="directory"]').click()
+  const chooser = await chooserPromise
+  expect(await chooser.element().getAttribute('id')).toBe('knowledgeDirectoryInput')
+  await page.locator('[data-toggle-sources]').click()
+  await menu.locator('[data-source-action="file"]').click()
+  await page.locator('#knowledgeFileInput').setInputFiles(Array.from({ length: 103 }, (_, i) => ({ name: `document-${i}.txt`, mimeType: 'text/plain', buffer: Buffer.from('Knowledge source regression ' + i) })))
+  await expect(page.locator('.document-table tbody tr')).toHaveCount(105)
+  await page.locator('.document-table-scroll').evaluate(el => { el.scrollTop = el.scrollHeight })
+  await page.locator('[data-toggle-sources]').click()
+  expect(await menu.locator('[data-source-action="directory"]').evaluate(el => {
+    const b = el.getBoundingClientRect()
+    return el.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2))
+  })).toBe(true)
+  await page.locator('[data-toggle-sources]').click()
+  await page.locator('[data-document-select-all]').check()
+  await expect(page.locator('[data-delete-documents]')).toContainText('(105)')
+  // A structured API error must keep remaining selections and show readable text.
+  await page.route('**/api/knowledge-bases/*/documents', async route => {
+    if (route.request().method() === 'DELETE') await route.fulfill({ status: 422, json: { detail: [{ msg: '删除暂未完成，请重试' }] } })
+    else await route.continue()
+  })
+  await page.locator('[data-delete-documents]').click()
+  await expect(page.locator('#toast')).toContainText('删除暂未完成，请重试')
+  await expect(page.locator('[data-delete-documents]')).toContainText('(105)')
+  await expect(page.locator('[data-delete-documents]')).toBeEnabled()
+  await page.unroute('**/api/knowledge-bases/*/documents')
+  await page.locator('[data-delete-documents]').click()
+  await expect(page.locator('.document-table tbody tr')).toHaveCount(0)
+  await expect(page.locator('#knowledgeContent')).toContainText('暂无数据源')
+  expect((await (await page.request.get(url + '/documents')).json()).documents).toEqual([])
+  expect((await (await page.request.get('/api/knowledge-bases')).json())[0].document_count).toBe(0)
+  expect((await (await page.request.get('/api/notes')).json()).notes).toHaveLength(2)
+  await page.screenshot({ path: test.info().outputPath('all-105-sources-deleted.png') })
+  await page.reload()
+  await page.locator('#knowledgeButton').click()
+  await expect(page.locator('#knowledgeContent')).toContainText('暂无数据源')
+  expect(errors).toEqual([])
+})

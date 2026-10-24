@@ -128,10 +128,10 @@ class AuthApiTests(unittest.TestCase):
                     self.assertEqual(connection.execute("SELECT COUNT(*) FROM users").fetchone()[0], 1)
 
     def test_phone_number_segments_and_ascii_digits(self) -> None:
-        for phone in ("12345678901", "15412345678", "14112345678", "19412345678", "1380013800", "138001380000", "１３８００１３８０００", "1380013800a"):
+        for phone in ("", "12345678901", "15412345678", "14112345678", "19412345678", "16111234567", "17406123456", "1380013800", "138001380000", "１３８００１３８０００", "1380013800a", "+1 18812345678"):
             with self.subTest(phone=phone), self.assertRaises(ValueError):
                 auth.normalize_phone(phone)
-        for phone in ("13800138000", "17812345678", "19912345678"):
+        for phone in ("13800138000", "17812345678", "18812345678", "19912345678", "16101234567", "17400123456"):
             self.assertEqual(auth.normalize_phone(phone), phone)
         self.assertEqual(auth.normalize_phone("+86 138-0013-8000"), "13800138000")
         with self.assertRaises(ValueError):
@@ -140,15 +140,27 @@ class AuthApiTests(unittest.TestCase):
     def test_invalid_phone_cannot_issue_code_or_register(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(auth, "AUTH_DB_PATH", Path(temporary) / "auth.db"):
+                auth.init_auth_db()
                 client = TestClient(app)
-                for endpoint, payload in [
-                    ("/api/auth/sms/send", {"phone": "15412345678", "purpose": "login"}),
-                    ("/api/auth/phone/login", {"phone": "15412345678", "code": "123456"}),
-                    ("/api/auth/phone/register", {"phone": "15412345678", "code": "123456"}),
-                ]:
-                    result = client.post(endpoint, json=payload)
-                    self.assertEqual(result.status_code, 400)
-                    self.assertEqual("请输入正确的手机号", result.json()["detail"])
+                for phone in ("", "12345678901", "15412345678", "14112345678", "19412345678", "16111234567", "17406123456", "1380013800", "138001380000", "１３８００１３８０００", "1380013800a"):
+                    for endpoint in ("/api/auth/sms/send", "/api/auth/phone/login", "/api/auth/phone/register"):
+                        with self.subTest(phone=phone, endpoint=endpoint):
+                            payload = {"phone": phone, "purpose": "login"} if endpoint.endswith("/send") else {"phone": phone, "code": "123456"}
+                            result = client.post(endpoint, json=payload)
+                            self.assertEqual(result.status_code, 400)
+                            self.assertEqual("请输入正确的手机号", result.json()["detail"])
+                self.assertEqual(auth.user_count(), 0)
+                with closing(sqlite3.connect(auth.AUTH_DB_PATH)) as connection:
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM verification_codes").fetchone()[0], 0)
+
+    def test_phone_code_is_bound_to_number_purpose_and_single_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(auth, "AUTH_DB_PATH", Path(temporary) / "auth.db"):
+                code = auth.issue_sms_code("18812345678", "login")["dev_code"]
+                self.assertFalse(auth.consume_sms_code("13800138000", "login", code))
+                self.assertFalse(auth.consume_sms_code("18812345678", "register", code))
+                self.assertTrue(auth.consume_sms_code("18812345678", "login", code))
+                self.assertFalse(auth.consume_sms_code("18812345678", "login", code))
                 self.assertEqual(auth.user_count(), 0)
 
     def test_phone_validation_rejects_invalid_number_and_code(self) -> None:

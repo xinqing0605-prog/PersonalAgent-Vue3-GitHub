@@ -53,6 +53,20 @@ export function createRuntime() {
         const knowledgeList = document.querySelector('#knowledgeList');
         const knowledgeContent = document.querySelector('#knowledgeContent');
         const knowledgeSettings = document.querySelector('#knowledgeSettings');
+        const knowledgeNoteImport = document.querySelector('#knowledgeNoteImport');
+        const knowledgeNoteChoices = document.querySelector('#knowledgeNoteChoices');
+        const knowledgeNoteImportError = document.querySelector('#knowledgeNoteImportError');
+        const submitKnowledgeNoteImport = document.querySelector('#submitKnowledgeNoteImport');
+        let noteImportKnowledgeBaseId = null;
+        let noteImportBusy = false;
+        let noteImportSequence = 0;
+        let importableNotes = [];
+        let selectedImportNoteIds = new Set();
+        let noteImportLoading = false;
+        let importNotesRenderSignature = null;
+        const knowledgeNoteSearch = document.querySelector('#knowledgeNoteSearch');
+        const knowledgeNoteSelectionCount = document.querySelector('#knowledgeNoteSelectionCount');
+        let deletingKnowledgeDocuments = false;
         const knowledgeFileInput = document.querySelector('#knowledgeFileInput');
         const knowledgeDirectoryInput = document.querySelector('#knowledgeDirectoryInput');
         const knowledgeCreateModal = document.querySelector('#knowledgeCreateModal');
@@ -196,7 +210,9 @@ export function createRuntime() {
           })().finally(() => { desktopStateWriter = null; });
           return desktopStateWriter;
         }
-        let phoneMobilePattern = /^1[3-9][0-9]{9}$/;
+        let phoneMobilePattern = null;
+        let smsRequestSequence = 0;
+        let smsPhone = "";
         let smsCountdown = 0;
         let smsTimer = null;
         let capsLockHintTimer = null;
@@ -228,6 +244,9 @@ export function createRuntime() {
         let discoveredGatewayModels = [];
         let showArchivedConversations = false;
         let loadedNotes = [];
+        let notesLoadVersion = 0;
+        let notesAppliedQuery = null;
+        let notesPendingQuery = null;
   
         function newConversation() { return { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), title: '新对话', messages: [], files: [], pendingAttachmentNames: [], knowledgeBaseIds: [], executionMode: 'auto', chatModelId: '', conversationInstructions: '', responseStyle: 'balanced', draft: '', editingMessageId: '', pinned: false, archived: false }; }
         function scopedStorageKey() { return authUser ? `${STORAGE_KEY}:user-${encodeURIComponent(String(authUser.id))}` : `${STORAGE_KEY}:guest`; }
@@ -330,9 +349,29 @@ export function createRuntime() {
         function showPhoneMessage(message, success = false) {
           phoneMessage.textContent = message;
           phoneMessage.classList.toggle('success', success);
-          phoneMessage.classList.toggle('info', !success);
+          phoneMessage.classList.remove('info');
+        }
+        function normalizePhoneInput() {
+          return phoneNumber.value.trim().replace(/[\s-]/g, '').replace(/^\+86/, '');
+        }
+        function validatedPhoneInput() {
+          const phone = normalizePhoneInput();
+          if (!/^1[3-9][0-9]{9}$/.test(phone) || (phoneMobilePattern && !phoneMobilePattern.test(phone))) {
+            phoneNumber.setAttribute('aria-invalid', 'true');
+            showPhoneMessage('请输入正确的手机号');
+            phoneNumber.focus();
+            return null;
+          }
+          if (!phoneMobilePattern) {
+            showPhoneMessage('手机号校验规则加载失败，请刷新后重试。');
+            return null;
+          }
+          phoneNumber.removeAttribute('aria-invalid');
+          return phone;
         }
         function resetSmsState({ clearFields = false, clearMessage = false } = {}) {
+          smsRequestSequence += 1;
+          if (clearFields || clearMessage) smsPhone = '';
           if (smsTimer) clearInterval(smsTimer);
           smsTimer = null;
           smsCountdown = 0;
@@ -355,6 +394,7 @@ export function createRuntime() {
             phoneNumber.value = '';
           }
           phoneCode.value = '';
+          phoneNumber.removeAttribute('aria-invalid');
           authPassword.value = '';
           authConfirmPassword.value = '';
           authSubmit.disabled = false;
@@ -363,12 +403,19 @@ export function createRuntime() {
           resetPasswordVisibility();
         }
         async function sendSmsCode() {
-          const phone = phoneNumber.value.trim().replace(/[\s-]/g, '').replace(/^\+86/, '');
-          if ((!/^1[3-9][0-9]{9}$/.test(phone) || !phoneMobilePattern.test(phone))) { showPhoneMessage('请输入正确的手机号'); phoneNumber.focus(); return; }
+          if (sendSmsButton.disabled) return;
+          const phone = validatedPhoneInput();
+          if (!phone) return;
+          const requestSequence = ++smsRequestSequence;
+          smsPhone = phone;
+          phoneNumber.value = phone;
+          phoneCode.value = '';
+          phoneMessage.textContent = '';
           sendSmsButton.disabled = true;
           try {
             const response = await nativeFetch('/api/auth/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, purpose: 'login' }) });
             const data = await response.json().catch(() => ({}));
+            if (requestSequence !== smsRequestSequence || normalizePhoneInput() !== phone) return;
             if (!response.ok) throw new Error(data.detail || '验证码发送失败。');
             const devHint = data.dev_code ? ` 验证码：${data.dev_code}` : '';
             showPhoneMessage(`${data.message || '验证码已发送。'}${devHint}`, true);
@@ -381,15 +428,16 @@ export function createRuntime() {
               else sendSmsButton.textContent = `${smsCountdown}s 后重发`;
             }, 1000);
           } catch (error) {
+            if (requestSequence !== smsRequestSequence) return;
             showPhoneMessage(error.message || '验证码发送失败。');
             sendSmsButton.disabled = false;
           }
         }
         async function submitPhoneAuth(event) {
           event.preventDefault();
-          const phone = phoneNumber.value.trim().replace(/[\s-]/g, '').replace(/^\+86/, '');
+          const phone = validatedPhoneInput();
+          if (!phone) return;
           const code = phoneCode.value.trim();
-          if ((!/^1[3-9][0-9]{9}$/.test(phone) || !phoneMobilePattern.test(phone))) { showPhoneMessage('请输入正确的手机号'); return; }
           if (!/^\d{6}$/.test(code)) { showPhoneMessage('验证码必须是 6 位数字。'); return; }
           phoneSubmit.disabled = true;
           try {
@@ -1870,8 +1918,8 @@ export function createRuntime() {
           const documents = loadedDocumentKnowledgeBaseId === base.id ? knowledgeDocuments : [];
           selectedKnowledgeDocuments = new Set([...selectedKnowledgeDocuments].filter((name) => documents.some((item) => item.filename === name)));
           const selectedCount = selectedKnowledgeDocuments.size;
-          const table = documents.length ? `<div class="data-source-header"><strong>数据源 · ${documents.length}</strong><button class="delete-documents" data-delete-documents type="button" ${selectedCount ? '' : 'disabled'}>${selectedCount ? `删除已选 (${selectedCount})` : '删除已选'}</button></div><div class="document-table-scroll" tabindex="0" aria-label="知识库文档列表"><table class="document-table"><thead><tr><th><input class="document-check" data-document-select-all type="checkbox" ${documents.length && selectedCount === documents.length ? 'checked' : ''} aria-label="选择全部数据源" /></th><th>名称</th><th>类型</th><th>状态</th><th>更新时间</th><th aria-label="操作"></th></tr></thead><tbody>${documents.map((document) => `<tr><td><input class="document-check" data-document-select="${escapeAttribute(document.filename)}" type="checkbox" ${selectedKnowledgeDocuments.has(document.filename) ? 'checked' : ''} aria-label="选择 ${escapeAttribute(document.filename)}" /></td><td title="${escapeAttribute(document.filename)}">▧&nbsp; ${escapeHtml(document.filename)}</td><td>文件</td><td><span class="document-ready">✓ 就绪</span></td><td>${escapeHtml(formatKnowledgeTime(document.updated_at))}</td><td><div class="document-row-actions"><button class="document-more" data-document-menu type="button" aria-label="打开文档操作">•••</button><div class="document-action-menu" hidden><button data-document-action="source" data-document-name="${escapeAttribute(document.filename)}" type="button">预览原文</button><button data-document-action="chunks" data-document-name="${escapeAttribute(document.filename)}" type="button">查看 Chunks</button><button data-document-action="reparse" data-document-name="${escapeAttribute(document.filename)}" type="button">重新解析</button></div></div></td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-knowledge"><span class="empty-icon">▧</span><h3>暂无数据源</h3><p>上传第一个数据源，便可用于当前对话检索。</p><div class="empty-source-actions"><button class="outline-button" data-source-action="file" type="button">▧ 文件</button><button class="outline-button" data-source-action="directory" type="button">▱ 目录</button><button class="outline-button" data-source-action="note" type="button" disabled title="将在后续版本支持">▤ 笔记</button><button class="outline-button" data-source-action="link" type="button" disabled title="将在后续版本支持">⌁ 链接</button></div></div>`;
-          knowledgeContent.innerHTML = `<div class="knowledge-content-inner"><div class="knowledge-title-row"><div><h2>${escapeHtml(base.name)}</h2><p class="knowledge-updated">更新于 ${escapeHtml(formatKnowledgeTime(base.updated_at))}</p></div><button class="outline-button" data-open-settings type="button">☷ 设置</button></div><div class="knowledge-toolbar"><div class="knowledge-toolbar-left"><span>资料只在你勾选它的对话中参与检索</span><label class="use-knowledge"><input data-kb-select="${base.id}" type="checkbox" ${selected.has(base.id) ? 'checked' : ''} /> 当前对话使用</label></div><div class="data-source-wrap"><button class="outline-button" data-toggle-sources type="button">＋ 添加数据源</button><div class="source-menu" id="sourceMenu" hidden><button data-source-action="file" type="button">▧ 上传文件</button><button data-source-action="directory" type="button">▱ 上传目录</button><button disabled type="button">▤ 导入笔记（待支持）</button><button disabled type="button">⌁ 添加链接（待支持）</button></div></div></div>${table}</div>`;
+          const table = documents.length ? `<div class="data-source-header"><strong>数据源 · ${documents.length}</strong><button class="delete-documents" data-delete-documents type="button" ${selectedCount && !deletingKnowledgeDocuments ? '' : 'disabled'}>${deletingKnowledgeDocuments ? '正在删除…' : selectedCount ? `删除已选 (${selectedCount})` : '删除已选'}</button></div><div class="document-table-scroll" tabindex="0" aria-label="知识库文档列表"><table class="document-table"><thead><tr><th><input class="document-check" data-document-select-all type="checkbox" ${documents.length && selectedCount === documents.length ? 'checked' : ''} aria-label="选择全部数据源" /></th><th>名称</th><th>类型</th><th>状态</th><th>更新时间</th><th aria-label="操作"></th></tr></thead><tbody>${documents.map((document) => `<tr><td><input class="document-check" data-document-select="${escapeAttribute(document.filename)}" type="checkbox" ${selectedKnowledgeDocuments.has(document.filename) ? 'checked' : ''} aria-label="选择 ${escapeAttribute(document.filename)}" /></td><td title="${escapeAttribute(document.filename)}">▧&nbsp; ${escapeHtml(document.filename)}</td><td>文件</td><td><span class="document-ready">✓ 就绪</span></td><td>${escapeHtml(formatKnowledgeTime(document.updated_at))}</td><td><div class="document-row-actions"><button class="document-more" data-document-menu type="button" aria-label="打开文档操作">•••</button><div class="document-action-menu" hidden><button data-document-action="source" data-document-name="${escapeAttribute(document.filename)}" type="button">预览原文</button><button data-document-action="chunks" data-document-name="${escapeAttribute(document.filename)}" type="button">查看 Chunks</button><button data-document-action="reparse" data-document-name="${escapeAttribute(document.filename)}" type="button">重新解析</button></div></div></td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-knowledge"><span class="empty-icon">▧</span><h3>暂无数据源</h3><p>上传第一个数据源，便可用于当前对话检索。</p><div class="empty-source-actions"><button class="outline-button" data-source-action="file" type="button">▧ 文件</button><button class="outline-button" data-source-action="directory" type="button">▱ 目录</button><button class="outline-button" data-source-action="note" type="button">▤ 导入笔记</button></div></div>`;
+          knowledgeContent.innerHTML = `<div class="knowledge-content-inner"><div class="knowledge-title-row"><div><h2>${escapeHtml(base.name)}</h2><p class="knowledge-updated">更新于 ${escapeHtml(formatKnowledgeTime(base.updated_at))}</p></div><button class="outline-button" data-open-settings type="button">☷ 设置</button></div><div class="knowledge-toolbar"><div class="knowledge-toolbar-left"><span>资料只在你勾选它的对话中参与检索</span><label class="use-knowledge"><input data-kb-select="${base.id}" type="checkbox" ${selected.has(base.id) ? 'checked' : ''} /> 当前对话使用</label></div><div class="data-source-wrap"><button class="outline-button" data-toggle-sources type="button">＋ 添加数据源</button><div class="source-menu" id="sourceMenu" hidden><button data-source-action="file" type="button">▧ 上传文件</button><button data-source-action="directory" type="button">▱ 上传目录</button><button data-source-action="note" type="button">▤ 导入笔记</button></div></div></div>${table}</div>`;
         }
         function renderKnowledgeSettings(base) {
           if (!base) { knowledgeSettings.hidden = true; return; }
@@ -2007,12 +2055,94 @@ export function createRuntime() {
           state.conversations.forEach((conversation) => { conversation.knowledgeBaseIds = (conversation.knowledgeBaseIds || []).filter((item) => item !== id); });
           editingKnowledgeBaseId = null; knowledgeDocuments = []; loadedDocumentKnowledgeBaseId = null; knowledgeSettings.hidden = true; await refreshKnowledgeBases(); render(false); showToast('知识库已删除。');
         }
+        function knowledgeErrorMessage(data, fallback) {
+          const details = Array.isArray(data?.detail) ? data.detail : [data?.detail];
+          const messages = details.map(item => typeof item === 'string' ? item : item?.msg || item?.message).filter(item => typeof item === 'string' && item);
+          return messages.join('；') || fallback;
+        }
         async function deleteKnowledgeDocuments() {
           const id = editingKnowledgeBaseId; const filenames = [...selectedKnowledgeDocuments];
-          if (!id || !filenames.length || !window.confirm(`删除选中的 ${filenames.length} 个数据源？此操作无法恢复。`)) return;
-          const response = await fetch(`/api/knowledge-bases/${encodeURIComponent(id)}/documents`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames }) });
-          const data = await response.json(); if (!response.ok) throw new Error(data.detail || '删除数据源失败');
-          selectedKnowledgeDocuments = new Set(); await refreshKnowledgeBases(); showToast(`已删除 ${data.deleted.length} 个数据源。`);
+          if (deletingKnowledgeDocuments || !id || !filenames.length || !window.confirm(`删除选中的 ${filenames.length} 个数据源？此操作无法恢复。`)) return;
+          deletingKnowledgeDocuments = true; renderKnowledgeBases();
+          let deleted = 0;
+          try {
+            for (let offset = 0; offset < filenames.length; offset += 100) {
+              const batch = filenames.slice(offset, offset + 100);
+              const response = await fetch(`/api/knowledge-bases/${encodeURIComponent(id)}/documents`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames: batch }) });
+              const data = await response.json();
+              if (!response.ok) throw new Error(knowledgeErrorMessage(data, '删除数据源失败'));
+              deleted += data.deleted.length;
+              if (editingKnowledgeBaseId === id) batch.forEach(name => selectedKnowledgeDocuments.delete(name));
+            }
+            showToast(`已删除 ${deleted} 个数据源。`);
+          } catch (error) { showToast(`${deleted ? `已删除 ${deleted} 个数据源；` : ''}${error.message || '删除失败，请重试'}`); }
+          finally { deletingKnowledgeDocuments = false; await refreshKnowledgeBases(); }
+        }
+        function renderImportableNotes(force = false) {
+          if (noteImportLoading) return;
+          const query = knowledgeNoteSearch.value.trim().toLocaleLowerCase();
+          const visibleNotes = importableNotes.filter(note => !query || `${note.title || ''}\n${note.content || note.excerpt || ''}`.toLocaleLowerCase().includes(query));
+          const signature = JSON.stringify([visibleNotes, visibleNotes.length ? null : Boolean(query)]);
+          if (!force && signature === importNotesRenderSignature) return;
+          importNotesRenderSignature = signature;
+          knowledgeNoteChoices.innerHTML = visibleNotes.length ? visibleNotes.map(note => `<label class="knowledge-note-choice"><input type="checkbox" data-import-note="${escapeAttribute(note.id)}" ${selectedImportNoteIds.has(note.id) ? 'checked' : ''} ${noteImportBusy ? 'disabled' : ''} /><span><strong>${escapeHtml(note.title)}</strong><small>${escapeHtml((note.excerpt || '').slice(0, 140))}</small></span></label>`).join('') : `<p>${query ? '没有匹配的笔记，请更换关键词。' : '暂无笔记。请先在“我的笔记”中创建笔记，再来导入。'}</p>`;
+          knowledgeNoteChoices.scrollTop = 0;
+          updateImportNoteSelection();
+        }
+        function updateImportNoteSelection() {
+          knowledgeNoteSelectionCount.textContent = `已选 ${selectedImportNoteIds.size} 篇`;
+          submitKnowledgeNoteImport.disabled = noteImportBusy || !selectedImportNoteIds.size;
+        }
+        async function openKnowledgeNoteImport() {
+          if (!editingKnowledgeBaseId) return;
+          noteImportKnowledgeBaseId = editingKnowledgeBaseId;
+          const sequence = ++noteImportSequence;
+          importableNotes = []; selectedImportNoteIds = new Set(); noteImportLoading = true; importNotesRenderSignature = null;
+          knowledgeNoteSearch.value = ''; updateImportNoteSelection();
+          knowledgeNoteImportError.textContent = '';
+          knowledgeNoteChoices.textContent = '正在加载笔记…';
+          knowledgeNoteImport.showModal(); knowledgeNoteSearch.focus();
+          try {
+            const response = await fetch('/api/notes');
+            const data = await response.json();
+            if (!response.ok) throw new Error(knowledgeErrorMessage(data, '读取笔记失败'));
+            if (sequence !== noteImportSequence || !knowledgeNoteImport.open) return;
+            importableNotes = Array.isArray(data.notes) ? data.notes : [];
+            noteImportLoading = false; renderImportableNotes();
+          } catch (error) {
+            if (sequence !== noteImportSequence || !knowledgeNoteImport.open) return;
+            knowledgeNoteChoices.textContent = '';
+            knowledgeNoteImportError.textContent = error.message || '读取笔记失败';
+          }
+        }
+        function closeKnowledgeNoteImport() {
+          if (noteImportBusy) return;
+          noteImportSequence++; knowledgeNoteImport.close();
+        }
+        async function importKnowledgeNotes() {
+          const id = noteImportKnowledgeBaseId;
+          const noteIds = [...selectedImportNoteIds];
+          if (noteImportBusy || !id || !noteIds.length) return;
+          noteImportBusy = true; updateImportNoteSelection();
+          submitKnowledgeNoteImport.textContent = '正在导入…'; knowledgeNoteImportError.textContent = '';
+          knowledgeNoteImport.querySelectorAll('input, #runKnowledgeNoteSearch, #closeKnowledgeNoteImport, #cancelKnowledgeNoteImport').forEach(el => { el.disabled = true; });
+          let added = 0;
+          try {
+            for (let offset = 0; offset < noteIds.length; offset += 50) {
+              const batch = noteIds.slice(offset, offset + 50);
+              const response = await fetch(`/api/knowledge-bases/${encodeURIComponent(id)}/notes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note_ids: batch }) });
+              const data = await response.json();
+              if (!response.ok) throw new Error(knowledgeErrorMessage(data, '导入笔记失败'));
+              added += data.length; batch.forEach(noteId => selectedImportNoteIds.delete(noteId));
+            }
+            knowledgeNoteImport.close(); showToast(`已导入 ${added} 篇笔记。`);
+          } catch (error) { knowledgeNoteImportError.textContent = `${added ? `已导入 ${added} 篇；` : ''}${error.message || '导入失败，请重试'}`; }
+          finally {
+            noteImportBusy = false;
+            knowledgeNoteImport.querySelectorAll('input, #runKnowledgeNoteSearch, #closeKnowledgeNoteImport, #cancelKnowledgeNoteImport').forEach(el => { el.disabled = false; });
+            submitKnowledgeNoteImport.textContent = '导入已选笔记'; renderImportableNotes(true);
+            await refreshKnowledgeBases();
+          }
         }
         async function inspectKnowledgeDocument(filename, mode) {
           const id = editingKnowledgeBaseId;
@@ -2042,7 +2172,10 @@ export function createRuntime() {
             const response = await fetch(`/api/knowledge-bases/${encodedId}/documents/${encodedName}/source`);
             const data = await response.json(); if (!response.ok) throw new Error(data.detail || '无法读取原文');
             const note = suffix === 'docx' ? '<div class="document-preview-note">文件已上传成功。桌面端内置预览暂不能直接呈现 DOCX 版式，以下为从原文件读取的正文内容。</div>' : '';
-            documentInspectBody.innerHTML = `${note}<pre class="document-original-text">${escapeHtml(data.content || '当前文件没有可预览的文本内容。')}</pre>`;
+            const content = data.content || '当前文件没有可预览的文本内容。';
+            documentInspectBody.innerHTML = suffix === 'md'
+              ? `<article class="document-original-text document-markdown-preview">${renderNoteMarkup(content)}</article>`
+              : `${note}<pre class="document-original-text">${escapeHtml(content)}</pre>`;
             documentInspectModal.hidden = false;
           } catch (error) { showToast(error.message || '无法读取文档'); }
         }
@@ -2278,16 +2411,56 @@ export function createRuntime() {
           await loadNotes();
           showToast(`笔记“${data.title || title}”已删除。`);
         }
-        async function loadNotes() {
-          const query = notesSearchInput.value.trim();
-          workspace.notesStatus = '正在读取当前账户的笔记…'; workspace.notesError = false;
+        function normalizedSearchQuery(input) { return input.value.trim().toLowerCase(); }
+        function bindLiveSearch(input, button, search) {
+          let timer = null; let composing = false; let scheduledQuery = null;
+          const run = (force = false) => {
+            clearTimeout(timer); timer = null; scheduledQuery = null;
+            search({ force });
+          };
+          const schedule = () => {
+            const query = normalizedSearchQuery(input);
+            if (timer !== null && query === scheduledQuery) return;
+            clearTimeout(timer); timer = null;
+            if (composing) return;
+            scheduledQuery = query;
+            if (!query) run(); else timer = later(() => run(), 200);
+          };
+          listen(input, 'compositionstart', () => { composing = true; clearTimeout(timer); timer = null; scheduledQuery = null; });
+          listen(input, 'compositionend', () => { composing = false; schedule(); });
+          listen(input, 'input', schedule);
+          listen(input, 'keydown', event => {
+            if (event.key === 'Enter' && !event.isComposing && !composing && event.keyCode !== 229) { event.preventDefault(); run(true); }
+          });
+          listen(button, 'click', () => run(true));
+        }
+        async function loadNotes({ force = true } = {}) {
+          if (notesModal.hidden) return;
+          const query = normalizedSearchQuery(notesSearchInput);
+          if (!force && (query === notesPendingQuery || (workspace.notesLoaded && !workspace.notesError && query === notesAppliedQuery))) return;
+          const version = ++notesLoadVersion;
+          notesPendingQuery = query;
+          // Show the initial loading state only; keep rendered cards during searches.
+          workspace.notesStatus = workspace.notesLoaded ? '' : '正在读取当前账户的笔记…';
+          workspace.notesError = false;
           try {
             const response = await fetch(`/api/notes?query=${encodeURIComponent(query)}`, { cache: 'no-store' });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || '无法读取笔记');
-            loadedNotes = Array.isArray(data.notes) ? data.notes : [];
-            workspace.notes = structuredClone(loadedNotes); workspace.notesStatus = "";
-          } catch (error) { workspace.notesStatus = error.message || '无法读取笔记'; workspace.notesError = true; }
+            if (version !== notesLoadVersion || notesModal.hidden || query !== normalizedSearchQuery(notesSearchInput)) return;
+            if (!response.ok) throw new Error(knowledgeErrorMessage(data, '无法读取笔记'));
+            const nextNotes = Array.isArray(data.notes) ? data.notes : [];
+            const visibleFields = notes => notes.map(note => [note.id, note.title, note.content || note.excerpt || '']);
+            const changed = JSON.stringify(visibleFields(nextNotes)) !== JSON.stringify(visibleFields(workspace.notes));
+            loadedNotes = nextNotes;
+            if (changed) workspace.notes = structuredClone(nextNotes);
+            workspace.notesLoaded = true; workspace.notesStatus = ''; notesAppliedQuery = query;
+            if (changed && noteEditor.hidden) document.querySelector('#notesModal .notes-scroll').scrollTop = 0;
+          } catch (error) {
+            if (version !== notesLoadVersion || notesModal.hidden || query !== normalizedSearchQuery(notesSearchInput)) return;
+            workspace.notesStatus = error.message || '无法读取笔记'; workspace.notesError = true;
+          } finally {
+            if (version === notesLoadVersion) notesPendingQuery = null;
+          }
         }
         function taskFormData() {
           return { title: document.querySelector('#taskTitle').value.trim(), due_date: document.querySelector('#taskDue').value,
@@ -2495,8 +2668,7 @@ export function createRuntime() {
         listen(document.querySelector('#openNotes'), 'click', openNotesModal);
         listen(document.querySelector('#closeNotes'), 'click', closeNotesModal);
         listen(document.querySelector('#newNote'), 'click', () => openNoteEditor());
-        listen(document.querySelector('#runNotesSearch'), 'click', loadNotes);
-        listen(notesSearchInput, 'keydown', (event) => { if (event.key === 'Enter') loadNotes(); });
+        bindLiveSearch(notesSearchInput, document.querySelector('#runNotesSearch'), loadNotes);
         listen(notesList, 'click', (event) => { if (event.target.matches('.note-card-body img')) previewNoteImage(event.target); });
         listen(notesList, 'keydown', (event) => {
           if (['Enter', ' '].includes(event.key) && event.target.matches('.note-card-body img')) { event.preventDefault(); previewNoteImage(event.target); }
@@ -2855,12 +3027,29 @@ export function createRuntime() {
           if (filename) { if (event.target.checked) selectedKnowledgeDocuments.add(filename); else selectedKnowledgeDocuments.delete(filename); renderKnowledgeBases(); return; }
           if (event.target.dataset.documentSelectAll !== undefined) { selectedKnowledgeDocuments = event.target.checked ? new Set(knowledgeDocuments.map((item) => item.filename)) : new Set(); renderKnowledgeBases(); }
         });
+        bindLiveSearch(knowledgeNoteSearch, document.querySelector('#runKnowledgeNoteSearch'), () => { if (knowledgeNoteImport.open && !noteImportBusy) renderImportableNotes(); });
+        listen(knowledgeNoteChoices, 'change', event => {
+          const id = event.target.dataset.importNote;
+          if (!id || noteImportBusy) return;
+          if (event.target.checked) selectedImportNoteIds.add(id); else selectedImportNoteIds.delete(id);
+          updateImportNoteSelection();
+        });
+        listen(documentInspectBody, 'click', event => { if (event.target.matches('.document-markdown-preview img')) previewNoteImage(event.target); });
+        listen(documentInspectBody, 'keydown', event => {
+          if (['Enter', ' '].includes(event.key) && event.target.matches('.document-markdown-preview img')) { event.preventDefault(); previewNoteImage(event.target); }
+        });
+        listen(document.querySelector('#closeKnowledgeNoteImport'), 'click', closeKnowledgeNoteImport);
+        listen(document.querySelector('#cancelKnowledgeNoteImport'), 'click', closeKnowledgeNoteImport);
+        listen(knowledgeNoteImport, 'cancel', event => { if (noteImportBusy) event.preventDefault(); });
+        listen(submitKnowledgeNoteImport, 'click', importKnowledgeNotes);
         listen(knowledgeContent, 'click', async (event) => {
           if (event.target.closest('[data-open-create]')) { openKnowledgeCreateDialog(); return; }
           if (event.target.closest('[data-open-settings]')) { knowledgeSettings.hidden = false; renderKnowledgeSettings(knowledgeBaseById(editingKnowledgeBaseId)); await refreshModelServices(); return; }
           if (event.target.closest('[data-open-model-settings]')) { openModelSettings(); return; }
           if (event.target.closest('[data-toggle-sources]')) { const menu = document.querySelector('#sourceMenu'); if (menu) menu.hidden = !menu.hidden; return; }
           const action = event.target.closest('[data-source-action]')?.dataset.sourceAction;
+          if (action) { const menu = document.querySelector('#sourceMenu'); if (menu) menu.hidden = true; }
+          if (action === 'note') { await openKnowledgeNoteImport(); return; }
           if (action === 'file') { knowledgeFileInput.dataset.knowledgeBaseId = editingKnowledgeBaseId || ''; knowledgeFileInput.click(); return; }
           if (action === 'directory') { knowledgeFileInput.dataset.knowledgeBaseId = editingKnowledgeBaseId || ''; knowledgeDirectoryInput.click(); return; }
           if (event.target.closest('[data-document-menu]')) {
@@ -2918,7 +3107,14 @@ export function createRuntime() {
         listen(authForm, 'submit', submitAuth);
         listen(phoneAuthForm, 'submit', submitPhoneAuth);
         listen(authUsername, 'input', () => rememberAuthIdentifiers({ passwordUsername: authUsername.value }));
-        listen(phoneNumber, 'input', () => rememberAuthIdentifiers({ phoneNumber: phoneNumber.value }));
+        listen(phoneNumber, 'input', () => {
+          if (normalizePhoneInput() !== smsPhone) {
+            resetSmsState({ clearMessage: true });
+            phoneCode.value = '';
+          }
+          phoneNumber.removeAttribute('aria-invalid');
+          rememberAuthIdentifiers({ phoneNumber: phoneNumber.value });
+        });
         listen(sendSmsButton, 'click', sendSmsCode);
         async function logoutCurrentUser() {
           accountLogoutButton.disabled = true;

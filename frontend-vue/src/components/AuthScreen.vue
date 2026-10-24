@@ -12,7 +12,7 @@
             <button class="auth-submit" id="authSubmit" type="submit">登录</button>
           </form>
           <form class="auth-form auth-panel" id="phoneAuthForm" hidden novalidate>
-            <label>手机号<input id="phoneNumber" inputmode="numeric" autocomplete="tel" minlength="11" maxlength="24" placeholder="请输入 11 位手机号" required /></label>
+            <label>手机号<input id="phoneNumber" aria-describedby="phoneMessage" inputmode="numeric" autocomplete="tel" minlength="11" maxlength="24" placeholder="请输入 11 位手机号" required /></label>
             <label>短信验证码<div class="sms-row"><input id="phoneCode" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" placeholder="6 位验证码" required /><button id="sendSmsButton" type="button">获取验证码</button></div><small class="auth-field-hint" id="phoneModeHint">验证码 5 分钟内有效；未注册手机号验证后会自动创建账户</small></label>
             <button class="auth-submit" id="phoneSubmit" type="submit">验证码登录 / 自动注册</button>
             <div class="auth-message" id="phoneMessage" role="alert"></div>

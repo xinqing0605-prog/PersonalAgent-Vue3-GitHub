@@ -4,7 +4,7 @@ import { copyImage, downloadImage } from '../lib/images'
 import { useImageViewerStore } from '../stores/imageViewer'
 
 const viewer = useImageViewerStore()
-const selector = '.generated-images img, .note-card-body img, .note-rich-editor img, .agent-image-preview .el-image-viewer__img'
+const selector = '.generated-images img, .document-markdown-preview img, .note-card-body img, .note-rich-editor img, .agent-image-preview .el-image-viewer__img'
 const hovered = shallowRef<HTMLImageElement | null>(null)
 const savePosition = ref({ left: '0px', top: '0px' })
 const saveVisible = ref(false)

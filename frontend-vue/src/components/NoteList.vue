@@ -7,7 +7,7 @@ const workspace = useWorkspaceStore()
 <template>
   <div id="notesList" class="search-result-list">
     <div v-if="workspace.notesStatus" :class="workspace.notesError ? 'warning' : 'lens-empty'">{{ workspace.notesStatus }}</div>
-    <template v-else>
+    <template v-if="workspace.notesLoaded">
       <details v-for="note in workspace.notes" :key="note.id" class="note-card">
         <summary><span class="note-summary-title">{{ note.title || '未命名笔记' }}</span>
           <button class="note-summary-delete" :data-note-delete="note.id" type="button" aria-label="删除笔记"

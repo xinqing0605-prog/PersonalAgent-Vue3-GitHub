@@ -167,12 +167,12 @@ class AuthCredentials(BaseModel):
 
 
 class PhoneAuthRequest(BaseModel):
-    phone: str = Field(min_length=11, max_length=16)
+    phone: str = Field(max_length=64)
     code: str = Field(min_length=1, max_length=12)
 
 
 class SmsCodeRequest(BaseModel):
-    phone: str = Field(min_length=11, max_length=16)
+    phone: str = Field(max_length=64)
     purpose: Literal["register", "login"] = "login"
 
 
@@ -650,6 +650,14 @@ class KnowledgeBaseUpdateRequest(BaseModel):
 
 class KnowledgeBaseDocumentRequest(BaseModel):
     files: list[UploadedFileRequest] = Field(min_length=1, max_length=50)
+
+
+class KnowledgeBaseDeleteDocumentsRequest(BaseModel):
+    filenames: list[str] = Field(min_length=1, max_length=100)
+
+
+class KnowledgeBaseImportNotesRequest(BaseModel):
+    note_ids: list[str] = Field(min_length=1, max_length=50)
 
 
 class KnowledgeBase(BaseModel):
@@ -2730,6 +2738,29 @@ def upload_knowledge_base_documents(
     return uploaded
 
 
+@app.post("/api/knowledge-bases/{knowledge_base_id}/notes", response_model=list[UploadedFile])
+def import_knowledge_base_notes(
+    knowledge_base_id: str,
+    request: KnowledgeBaseImportNotesRequest,
+    http_request: Request,
+) -> list[UploadedFile]:
+    user_id = request_user_id(http_request)
+    load_knowledge_base(knowledge_base_id, user_id=user_id)
+    result = execute_tool("search_notes", {"query": ""}, user_id=user_id)
+    notes = {str(note["id"]): note for note in result.get("notes", [])}
+    note_ids = list(dict.fromkeys(request.note_ids))
+    if any(note_id not in notes for note_id in note_ids):
+        raise HTTPException(status_code=404, detail="部分笔记已不存在，请重新选择")
+    # Copy account-owned Markdown snapshots through the same upload validation.
+    files = [UploadedFileRequest(
+        filename=note_id,
+        data_base64=base64.b64encode(str(notes[note_id]["content"]).encode("utf-8")).decode("ascii"),
+    ) for note_id in note_ids]
+    return upload_knowledge_base_documents(
+        knowledge_base_id, KnowledgeBaseDocumentRequest(files=files), http_request,
+    )
+
+
 @app.get(
     "/api/knowledge-bases/{knowledge_base_id}/documents/{filename}/source",
     response_model=KnowledgeBaseDocumentSourceResponse,
@@ -2799,14 +2830,16 @@ def reparse_knowledge_base_document(knowledge_base_id: str, filename: str, http_
 )
 def delete_knowledge_base_documents(
     knowledge_base_id: str,
-    request: DeleteFilesRequest,
+    request: KnowledgeBaseDeleteDocumentsRequest,
     http_request: Request,
 ) -> DeleteFilesResponse:
     user_id = request_user_id(http_request)
     load_knowledge_base(knowledge_base_id, user_id=user_id)
+    # Validate the whole batch before removing any file.
+    paths = [knowledge_base_document_path(knowledge_base_id, filename, user_id=user_id)
+             for filename in dict.fromkeys(request.filenames)]
     deleted: list[str] = []
-    for filename in request.filenames:
-        path = knowledge_base_document_path(knowledge_base_id, filename, user_id=user_id)
+    for path in paths:
         if path.exists() and path.is_file():
             path.unlink()
             deleted.append(path.name)
