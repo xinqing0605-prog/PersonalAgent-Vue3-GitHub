@@ -8,7 +8,7 @@
 
 | 形态 | 地址 | 说明 |
 | --- | --- | --- |
-| 网页版 | https://personal-agent-demo.onrender.com | 免安装，浏览器直接打开 |
+| 网页版 | http://49.232.39.123:8080 | 免安装，浏览器直接打开 |
 | 桌面版（Windows） | [下载最新版](https://github.com/xinqing0605-prog/PersonalAgent-Vue3-GitHub/releases/latest) | 解压后双击「启动演示版.cmd」 |
 
 > 网页版运行在免费实例上，首次访问可能需要 30–60 秒唤醒，闲置 15 分钟后会休眠。
